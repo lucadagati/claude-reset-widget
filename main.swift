@@ -99,7 +99,42 @@ class App: NSObject, NSApplicationDelegate {
         RunLoop.main.add(t, forMode: .common)
     }
 
-    func refresh() {
+    var remoteList: [(String, Bool)] = []
+    let remotePath = NSString(string: "~/ClaudeResetWidget/remote.txt").expandingTildeInPath
+    func remoteHost() -> String? {
+        guard let t = try? String(contentsOfFile: remotePath, encoding: .utf8) else { return nil }
+        let h = t.trimmingCharacters(in: .whitespacesAndNewlines); return h.isEmpty ? nil : h
+    }
+    func runRemote(_ host: String, _ args: String) -> String? {
+        let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+        p.arguments = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", host, "sudo /usr/local/bin/claude-switch-remote \(args)"]
+        let pipe = Pipe(); p.standardOutput = pipe; p.standardError = Pipe()
+        do { try p.run() } catch { return nil }
+        let d = pipe.fileHandleForReading.readDataToEndOfFile(); p.waitUntilExit()
+        return p.terminationStatus == 0 ? String(data: d, encoding: .utf8) : nil
+    }
+    func fetchRemote() {
+        guard let host = remoteHost() else { return }
+        DispatchQueue.global().async { [weak self] in
+            guard let out = self?.runRemote(host, "list") else { return }
+            let list = out.split(separator: "\n").map { l -> (String, Bool) in
+                let t = String(l); return (t.dropFirst(2).trimmingCharacters(in: .whitespaces), t.hasPrefix("*")) }
+            DispatchQueue.main.async {
+                guard let s = self else { return }
+                if list.map({ "\($0.0)\($0.1)" }) != s.remoteList.map({ "\($0.0)\($0.1)" }) { s.remoteList = list; s.refresh(fetch: false) }
+            }
+        }
+    }
+    @objc func switchRemote(_ s: NSMenuItem) {
+        guard let name = s.representedObject as? String, let host = remoteHost() else { return }
+        DispatchQueue.global().async { [weak self] in
+            _ = self?.runRemote(host, name)
+            DispatchQueue.main.async { self?.fetchRemote() }
+        }
+    }
+
+    func refresh(fetch: Bool = true) {
+        if fetch { fetchRemote() }
         let now = Date()
         let rows = loadAccounts().map { ($0, nextReset($0.anchor, now: now)) }.sorted { $0.1 < $1.1 }
         let m = NSMenu()
@@ -134,6 +169,13 @@ class App: NSObject, NSApplicationDelegate {
         m.addItem(.separator())
         let cur = currentVSCodeDir()
         let sub = NSMenu()
+        if remoteHost() != nil {
+            for (n, on) in remoteList {
+                let it = NSMenuItem(title: n, action: #selector(switchRemote(_:)), keyEquivalent: "")
+                it.target = self; it.representedObject = n; it.state = on ? .on : .off; sub.addItem(it)
+            }
+            if remoteList.isEmpty { sub.addItem(NSMenuItem(title: "server non raggiungibile…", action: nil, keyEquivalent: "")) }
+        } else {
         for a in loadAccounts() {
             let dir = a.configDir.map { NSString(string: $0).expandingTildeInPath }
             let ready = dir == nil || FileManager.default.fileExists(atPath: dir!)
@@ -142,7 +184,8 @@ class App: NSObject, NSApplicationDelegate {
             it.state = (dir == cur) ? .on : .off
             sub.addItem(it)
         }
-        let parent = NSMenuItem(title: "Account VS Code", action: nil, keyEquivalent: "")
+        }
+        let parent = NSMenuItem(title: remoteHost() != nil ? "Account Claude sul server" : "Account VS Code", action: nil, keyEquivalent: "")
         parent.submenu = sub; m.addItem(parent)
         var title = "⏳ nessun account"
         if let first = rows.first {

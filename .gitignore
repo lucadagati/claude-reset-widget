@@ -3,3 +3,4 @@ ClaudeResetWidget
 *.bak
 .DS_Store
 buongiorno/accounts.conf
+remote.txt

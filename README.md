@@ -29,3 +29,6 @@ Nella cartella [`buongiorno/`](buongiorno/) c'e' il timer systemd che apre in an
 ### VS Code via Remote-SSH (account sul server)
 `claude-switch-remote` (da copiare in `/usr/local/bin` sul server) usa gli stessi account di `buongiorno/accounts.conf`:
 `claude-switch-remote list`, `claude-switch-remote <nome>`, `claude-switch-remote login <nome>`.
+
+### Cambiare account del server dal widget (VS Code Remote-SSH)
+Se VS Code gira su un altro Mac e si collega a un server, crea `remote.txt` con l'alias SSH di un utente del server che abbia `sudo` senza password (accesso con chiave). Il menu "Account Claude sul server" esegue `claude-switch-remote` sul server.
