@@ -8,6 +8,8 @@ ANCHOR=$(date -d '2026-10-07 01:04' +%s)
 INTERVAL_MIN=305
 CONF=/opt/buongiorno/accounts.conf   # righe: nome|config_dir|offset_min   (config_dir "default" = ~/.claude)
 LOG=/var/log/buongiorno/buongiorno.log
+USAGE_DIR=/var/lib/buongiorno/usage   # utilizzo 5h/settimana per account, letto dal widget
+PROMPT="${BUONGIORNO_PROMPT:-Buongiorno}"
 mkdir -p "$(dirname "$LOG")"
 
 send() {  # $1=nome $2=config_dir
@@ -18,7 +20,7 @@ send() {  # $1=nome $2=config_dir
   fi
   for try in 1 2 3; do
     echo "[$(date '+%F %T')] [$name] invio Buongiorno (tentativo $try)" >> "$LOG"
-    out=$(cd /tmp && env "${env[@]}" timeout 90 /root/.local/bin/claude -p "Buongiorno" 2>&1); rc=$?
+    out=$(cd /tmp && env "${env[@]}" timeout 90 /root/.local/bin/claude -p "$PROMPT" --output-format stream-json --verbose 2>&1 | python3 /opt/buongiorno/parse_usage.py "$name" "$USAGE_DIR"); rc=$?
     echo "[$name] $out" >> "$LOG"
     if [ $rc -eq 0 ] && ! grep -q "API Error" <<<"$out"; then
       echo "[$(date '+%F %T')] [$name] ok" >> "$LOG"; return 0

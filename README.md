@@ -32,3 +32,7 @@ Nella cartella [`buongiorno/`](buongiorno/) c'e' il timer systemd che apre in an
 
 ### Cambiare account del server dal widget (VS Code Remote-SSH)
 Se VS Code gira su un altro Mac e si collega a un server, crea `remote.txt` con l'alias SSH di un utente del server che abbia `sudo` senza password (accesso con chiave). Il menu "Account Claude sul server" esegue `claude-switch-remote` sul server.
+
+### Saturazione 5h e settimanale (barre nella barra dei menu)
+Buongiorno salva a ogni invio l'utilizzo reale (da `rate_limit_event`) in `/var/lib/buongiorno/usage/<nome>.json`.
+Crea `usage_host.txt` con l'alias SSH del server (utente che legge quei file): il widget mostra per ogni account una barra a batteria (5h) e una barra sottile (settimana), i numeri sono nel menu.
