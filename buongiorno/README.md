@@ -1,6 +1,6 @@
 # Buongiorno multi-account
 
-Invia il messaggio **"Buongiorno"** a Claude (`claude -p`) ogni **5h05m (305 min)** per ciascun
+Invia il messaggio **"Buongiorno"** a Claude (`claude -p`, con modello Haiku e configurazione minima: ~500 token per invio) ogni **5h05m (305 min)** per ciascun
 account elencato in `accounts.conf`, con le fasi **sfalsate** (offset) in modo che i reset delle
 finestre da 5 ore cadano a distanza regolare tra gli account (con 3 account: ~102 min).
 Gira come timer systemd: funziona con Claude Code chiuso e dopo un riavvio.

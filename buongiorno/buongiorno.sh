@@ -10,6 +10,9 @@ CONF=/opt/buongiorno/accounts.conf   # righe: nome|config_dir|offset_min   (conf
 LOG=/var/log/buongiorno/buongiorno.log
 USAGE_DIR=/var/lib/buongiorno/usage   # utilizzo 5h/settimana per account, letto dal widget
 PROMPT="${BUONGIORNO_PROMPT:-Buongiorno}"
+# Configurazione minima: serve solo ad aprire la finestra da 5h, ~500 token invece di ~21000
+# (modello piccolo, niente system prompt di Claude Code, strumenti, MCP, plugin e impostazioni utente).
+MIN_FLAGS=(--model haiku --system-prompt "Reply with one character." --tools "" --strict-mcp-config --disable-slash-commands --setting-sources "")
 mkdir -p "$(dirname "$LOG")"
 
 send() {  # $1=nome $2=config_dir
@@ -20,7 +23,7 @@ send() {  # $1=nome $2=config_dir
   fi
   for try in 1 2 3; do
     echo "[$(date '+%F %T')] [$name] invio Buongiorno (tentativo $try)" >> "$LOG"
-    out=$(cd /tmp && env "${env[@]}" timeout 90 /root/.local/bin/claude -p "$PROMPT" --output-format stream-json --verbose 2>&1 | python3 /opt/buongiorno/parse_usage.py "$name" "$USAGE_DIR"); rc=$?
+    out=$(cd /tmp && env "${env[@]}" timeout 90 /root/.local/bin/claude -p "$PROMPT" "${MIN_FLAGS[@]}" --output-format stream-json --verbose 2>&1 | python3 /opt/buongiorno/parse_usage.py "$name" "$USAGE_DIR"); rc=$?
     echo "[$name] $out" >> "$LOG"
     if [ $rc -eq 0 ] && ! grep -q "API Error" <<<"$out"; then
       echo "[$(date '+%F %T')] [$name] ok" >> "$LOG"; return 0

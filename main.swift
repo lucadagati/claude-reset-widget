@@ -46,6 +46,19 @@ class CardView: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
     override var isFlipped: Bool { true }
+    var onClick: (() -> Void)?
+    var hover = false
+    override func updateTrackingAreas() {
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
+    }
+    override func mouseEntered(with e: NSEvent) { hover = true; needsDisplay = true }
+    override func mouseExited(with e: NSEvent) { hover = false; needsDisplay = true }
+    override func acceptsFirstMouse(for e: NSEvent?) -> Bool { true }
+    override func mouseUp(with e: NSEvent) {
+        enclosingMenuItem?.menu?.cancelTracking()
+        onClick?()
+    }
 
     @discardableResult
     func text(_ s: String, _ x: CGFloat, _ y: CGFloat, size: CGFloat, weight: NSFont.Weight = .regular,
@@ -96,6 +109,10 @@ class CardView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         let W = bounds.width
+        if hover {
+            NSColor.labelColor.withAlphaComponent(0.08).setFill()
+            NSBezierPath(roundedRect: bounds.insetBy(dx: 4, dy: 1), xRadius: 8, yRadius: 8).fill()
+        }
         let worst = max(c.weekUtil ?? 0, c.winUtil ?? 0)
         (c.weekUtil == nil && c.winUtil == nil ? NSColor.tertiaryLabelColor : sev(worst)).setFill()
         NSBezierPath(ovalIn: NSRect(x: 18, y: 11, width: 10, height: 10)).fill()
@@ -265,7 +282,9 @@ class App: NSObject, NSApplicationDelegate {
                 }
             }
             let mi = NSMenuItem()
-            mi.view = CardView(card)
+            let cv = CardView(card)
+            cv.onClick = { [weak self] in self?.pick(a.name) }
+            mi.view = cv
             m.addItem(mi)
             if i < rows.count - 1 { m.addItem(.separator()) }
         }
@@ -334,6 +353,12 @@ class App: NSObject, NSApplicationDelegate {
             try? o.run()
         }
         refresh()
+    }
+
+    // Clic su una scheda = stessa azione di "Account VS Code -> nome"
+    func pick(_ name: String) {
+        let it = NSMenuItem(); it.representedObject = name
+        if remoteHost() != nil { switchRemote(it) } else { switchAccount(it) }
     }
 
     @objc func openConfig() { NSWorkspace.shared.open(URL(fileURLWithPath: configPath)) }
