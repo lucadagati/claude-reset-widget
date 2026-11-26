@@ -1,36 +1,34 @@
-# Buongiorno multi-account
+# Buongiorno (server timer)
 
-Invia il messaggio **"Buongiorno"** a Claude (`claude -p`, con modello Haiku e configurazione minima: ~500 token per invio) ogni **5h05m (305 min)** per ciascun
-account elencato in `accounts.conf`, con le fasi **sfalsate** (offset) in modo che i reset delle
-finestre da 5 ore cadano a distanza regolare tra gli account (con 3 account: ~102 min).
-Gira come timer systemd: funziona con Claude Code chiuso e dopo un riavvio.
+Sends a tiny message ("Buongiorno") to every Claude account listed in `accounts.conf` every **5 h 05 min** (305 min), with per-account **offsets**, so each account's 5-hour window opens as soon as the previous one ends and the resets of different accounts are spread evenly. Each run also stores the account's real **5-hour and weekly utilization** in `/var/lib/buongiorno/usage/<name>.json`.
 
-## Come funziona
-Il timer scatta ogni minuto. Per ogni account lo script invia solo nel minuto in cui
-`(ora - (ANCHOR + offset))` e' multiplo di 305 min. Gli account non autenticati vengono saltati;
-se l'API non risponde ritenta fino a 3 volte (pausa 2 min). Gli account girano in parallelo.
+See the [main README](../README.md) for the architecture, the data flow and how the widget consumes the usage files.
 
-## Configurazione account
-Copia `accounts.example.conf` in `accounts.conf` (non versionato) e modifica le righe `nome|config_dir|offset_min`.
-Ogni account ha una propria cartella di credenziali, scelta con `CLAUDE_CONFIG_DIR`. Login una tantum:
+## How it works
+- `buongiorno.timer` fires every minute (second :10); `buongiorno.sh` sends only in the minute where `(now − (ANCHOR + offset))` is a multiple of 305 min.
+- Each request uses a minimal Claude Code configuration (Haiku, no tools/MCP/plugins, one-character system prompt): ~530 tokens instead of ~21,000.
+- Accounts run in parallel; up to 3 attempts (2 min apart); non-authenticated accounts are skipped.
+- `parse_usage.py` reads the `rate_limit_event` from `--output-format stream-json` and writes the usage file atomically.
 
+## Files
+| File | Purpose |
+|---|---|
+| `buongiorno.sh` | Main script (installed to `/opt/buongiorno/`) |
+| `parse_usage.py` | Extracts utilization from the stream output |
+| `accounts.example.conf` | Template for `accounts.conf` (`name|config_dir|offset_min`) |
+| `systemd/` | Service and timer units |
+| `install.sh` / `uninstall.sh` | Install/update or remove everything |
+| `next_runs.sh` | Prints the next scheduled base-cycle times |
+
+## Usage (as root)
 ```bash
-CLAUDE_CONFIG_DIR=/root/.claude-account-b claude auth login
+cp accounts.example.conf accounts.conf && $EDITOR accounts.conf
+CLAUDE_CONFIG_DIR=/root/.claude-account-b claude auth login   # once per non-default account (use a private browser window)
+./install.sh
+/opt/buongiorno/buongiorno.sh --force account-b               # test one account now
+tail -f /var/log/buongiorno/buongiorno.log
+systemctl stop buongiorno.timer                               # pause
+./uninstall.sh
 ```
-Apri il link in una finestra in incognito, altrimenti il browser puo' riusare un'altra sessione e
-collegare l'account sbagliato. Verifica con `CLAUDE_CONFIG_DIR=... claude auth status`.
-Le credenziali restano sul server e **non fanno parte del repo**.
 
-## Uso (come root)
-```bash
-./install.sh                                  # installa/aggiorna
-./next_runs.sh 10                             # prossimi invii del ciclo base
-/opt/buongiorno/buongiorno.sh --force nome    # invio di prova per un account
-tail -f /var/log/buongiorno/buongiorno.log    # log, con prefisso [nome]
-systemctl stop buongiorno.timer               # sospendi
-./uninstall.sh                                # rimuove tutto
-```
-Per cambiare l'orario di partenza modifica `ANCHOR` in `buongiorno.sh` e rilancia `./install.sh`.
-
-## Requisiti
-Claude Code CLI in `/root/.local/bin/claude`, systemd. Ogni invio e' una vera richiesta e conta sul tuo utilizzo.
+To move the schedule, change `ANCHOR` in `buongiorno.sh` and re-run `./install.sh`. Requirements: Claude Code CLI at `/root/.local/bin/claude`, `python3`, systemd. Every ping is a real (tiny) request and counts against your usage.

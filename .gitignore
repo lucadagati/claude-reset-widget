@@ -5,3 +5,4 @@ ClaudeResetWidget
 buongiorno/accounts.conf
 remote.txt
 usage_host.txt
+!docs/*.png
