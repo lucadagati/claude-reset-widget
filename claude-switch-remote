@@ -1,0 +1,47 @@
+#!/usr/bin/env python3
+"""claude-switch-remote: cambia account Claude per l'estensione VS Code su un server (Remote-SSH).
+  claude-switch-remote list | <nome> | login <nome>
+Legge gli account da /opt/buongiorno/accounts.conf (nome|config_dir|offset; "default" = ~/.claude)."""
+import json, os, sys, glob, subprocess
+CONF = "/opt/buongiorno/accounts.conf"; VAR = "CLAUDE_CONFIG_DIR"; CLAUDE = os.path.expanduser("~/.local/bin/claude")
+HOME = os.path.expanduser("~")
+
+def accounts():
+    out = {}
+    for l in open(CONF):
+        l = l.strip()
+        if l and not l.startswith("#"):
+            n, d, *_ = l.split("|"); out[n] = None if d == "default" else d
+    return out
+
+def settings_files():   # impostazioni "machine" dei VS Code server presenti
+    return [p + "/settings.json" for p in glob.glob(HOME + "/.vscode-server*/data/Machine") + glob.glob(HOME + "/.openvscode-server/data/Machine")]
+
+def read(p):
+    try: return json.load(open(p))
+    except FileNotFoundError: return {}
+    except Exception as e: sys.exit(f"{p} non leggibile ({e}); non modifico nulla.")
+
+def current(s):
+    return next((e["value"] for e in s.get("claudeCode.environmentVariables", []) if e.get("name") == VAR), None)
+
+acc = accounts(); cmd = sys.argv[1:] or ["list"]; files = settings_files()
+if cmd[0] == "list":
+    cur = current(read(files[0])) if files else None
+    for n, d in acc.items(): print(("* " if d == cur else "  ") + n)
+elif cmd[0] == "login" and len(cmd) == 2 and cmd[1] in acc:
+    env = dict(os.environ); env.pop(VAR, None)
+    if acc[cmd[1]]: os.makedirs(acc[cmd[1]], exist_ok=True); env[VAR] = acc[cmd[1]]
+    sys.exit(subprocess.call([CLAUDE, "auth", "login"], env=env, cwd="/tmp"))
+elif cmd[0] in acc:
+    d = acc[cmd[0]]
+    if d and not os.path.isdir(d): sys.exit(f"{cmd[0]}: non autenticato. Esegui: claude-switch-remote login {cmd[0]}")
+    for p in files:
+        s = read(p); ev = [e for e in s.get("claudeCode.environmentVariables", []) if e.get("name") != VAR]
+        if d: ev.append({"name": VAR, "value": d})
+        if ev: s["claudeCode.environmentVariables"] = ev
+        else: s.pop("claudeCode.environmentVariables", None)
+        json.dump(s, open(p, "w"), indent=4); print("aggiornato", p)
+    print(f"VS Code (server) ora usa: {cmd[0]} -> apri una nuova conversazione o ricarica la finestra")
+else:
+    sys.exit(__doc__)

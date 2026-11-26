@@ -25,3 +25,7 @@ I login e le credenziali restano nelle cartelle `configDir` e nel Keychain: non 
 
 ## Buongiorno (server)
 Nella cartella [`buongiorno/`](buongiorno/) c'e' il timer systemd che apre in anticipo le finestre da 5 ore su piu' account.
+
+### VS Code via Remote-SSH (account sul server)
+`claude-switch-remote` (da copiare in `/usr/local/bin` sul server) usa gli stessi account di `buongiorno/accounts.conf`:
+`claude-switch-remote list`, `claude-switch-remote <nome>`, `claude-switch-remote login <nome>`.
