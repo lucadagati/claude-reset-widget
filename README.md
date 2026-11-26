@@ -22,3 +22,6 @@ Posizione prevista: `~/ClaudeResetWidget`. Per l'avvio al login crea un LaunchAg
 ./claude-switch account-b         # imposta CLAUDE_CONFIG_DIR per l'estensione
 ```
 I login e le credenziali restano nelle cartelle `configDir` e nel Keychain: non fanno parte del repo.
+
+## Buongiorno (server)
+Nella cartella [`buongiorno/`](buongiorno/) c'e' il timer systemd che apre in anticipo le finestre da 5 ore su piu' account.

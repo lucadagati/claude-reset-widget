@@ -1,0 +1,7 @@
+[Unit]
+Description=Invia "Buongiorno" a Claude ogni 5h05m
+
+[Service]
+Type=oneshot
+Environment=HOME=/root
+ExecStart=/opt/buongiorno/buongiorno.sh

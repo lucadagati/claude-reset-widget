@@ -1,0 +1,9 @@
+[Unit]
+Description=Controllo ogni minuto per Buongiorno (ogni 5h05m)
+
+[Timer]
+OnCalendar=*:*:10
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target
