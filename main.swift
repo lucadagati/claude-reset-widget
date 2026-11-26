@@ -98,7 +98,7 @@ class CardView: NSView {
         let col = util.map(sev) ?? fallbackColor
         bar(y + 20, util ?? fallback, col, mark: mark)
         if let u = util {
-            let pct = Int((u * 100).rounded())
+            let pct = min(100, Int((u * 100).rounded()))
             let w = text("\(pct)% usato", 18, y + 36, size: 12, weight: .semibold, color: col)
             if u >= 1 { text("  limite raggiunto", 18 + w, y + 36, size: 12, weight: .semibold, color: .systemRed) }
         } else {
