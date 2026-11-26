@@ -30,9 +30,10 @@ func fmt(_ t: TimeInterval) -> String {
 struct Usage { var fiveUtil: Double?; var fiveReset: Date?; var weekUtil: Double?; var weekReset: Date?; var updated: Date }
 
 struct Card {
-    var winUtil: Double? = nil, weekUtil: Double? = nil
-    var name: String, weekLeft: TimeInterval, weekDate: String, weekUsed: Double, isNext: Bool
-    var winText: String?, winFrac: Double, winOpen: Bool
+    var name: String, weekLeft: TimeInterval, weekDate: String, weekUsed: Double
+    var isActive: Bool
+    var weekUtil: Double?, winUtil: Double?
+    var winLeft: TimeInterval?, winClock: String?, winOpen: Bool
 }
 
 func sev(_ u: Double) -> NSColor { u < 0.6 ? .systemGreen : (u < 0.85 ? .systemOrange : .systemRed) }
@@ -41,59 +42,74 @@ class CardView: NSView {
     let c: Card
     init(_ c: Card) {
         self.c = c
-        super.init(frame: NSRect(x: 0, y: 0, width: 350, height: 112))
+        super.init(frame: NSRect(x: 0, y: 0, width: 380, height: 150))
     }
     required init?(coder: NSCoder) { fatalError() }
     override var isFlipped: Bool { true }
 
+    @discardableResult
     func text(_ s: String, _ x: CGFloat, _ y: CGFloat, size: CGFloat, weight: NSFont.Weight = .regular,
-              color: NSColor = .labelColor, right: Bool = false, mono: Bool = false) {
-        let font = mono ? NSFont.monospacedDigitSystemFont(ofSize: size, weight: weight)
-                        : NSFont.systemFont(ofSize: size, weight: weight)
+              color: NSColor = .labelColor, right: Bool = false, mono: Bool = false) -> CGFloat {
+        let font = mono ? NSFont.monospacedDigitSystemFont(ofSize: size, weight: weight) : NSFont.systemFont(ofSize: size, weight: weight)
         let a = NSAttributedString(string: s, attributes: [.font: font, .foregroundColor: color])
         let w = a.size().width
         a.draw(at: NSPoint(x: right ? x - w : x, y: y))
+        return w
     }
 
-    func bar(_ y: CGFloat, _ frac: Double, _ color: NSColor, h: CGFloat) {
-        let r = NSRect(x: 16, y: y, width: bounds.width - 32, height: h)
-        NSColor.labelColor.withAlphaComponent(0.12).setFill()
-        NSBezierPath(roundedRect: r, xRadius: h / 2, yRadius: h / 2).fill()
-        var f = r; f.size.width = max(h, r.width * CGFloat(min(max(frac, 0), 1)))
+    func pill(_ s: String, _ x: CGFloat, _ y: CGFloat, _ color: NSColor) {
+        let a = NSAttributedString(string: s, attributes: [.font: NSFont.systemFont(ofSize: 9, weight: .bold), .foregroundColor: color])
+        let r = NSRect(x: x, y: y, width: a.size().width + 12, height: 15)
+        color.withAlphaComponent(0.18).setFill()
+        NSBezierPath(roundedRect: r, xRadius: 7.5, yRadius: 7.5).fill()
+        a.draw(at: NSPoint(x: x + 6, y: y + 2))
+    }
+
+    func bar(_ y: CGFloat, _ frac: Double, _ color: NSColor, mark: Double? = nil) {
+        let r = NSRect(x: 18, y: y, width: bounds.width - 36, height: 9)
+        NSColor.labelColor.withAlphaComponent(0.14).setFill()
+        NSBezierPath(roundedRect: r, xRadius: 4.5, yRadius: 4.5).fill()
+        var f = r; f.size.width = max(9, r.width * CGFloat(min(max(frac, 0), 1)))
         color.setFill()
-        NSBezierPath(roundedRect: f, xRadius: h / 2, yRadius: h / 2).fill()
+        NSBezierPath(roundedRect: f, xRadius: 4.5, yRadius: 4.5).fill()
+        if let m = mark {
+            NSColor.labelColor.setFill()
+            NSBezierPath(roundedRect: NSRect(x: r.minX + r.width * CGFloat(min(max(m, 0), 1)) - 1, y: y - 3, width: 2, height: 15), xRadius: 1, yRadius: 1).fill()
+        }
+    }
+
+    func block(_ y: CGFloat, caption: String, right: String, util: Double?, sub: String, mark: Double?, fallback: Double, fallbackColor: NSColor) {
+        let W = bounds.width
+        text(caption, 18, y, size: 10, weight: .bold, color: .secondaryLabelColor)
+        text(right, W - 18, y, size: 11, weight: .medium, color: .labelColor, right: true, mono: true)
+        let col = util.map(sev) ?? fallbackColor
+        bar(y + 20, util ?? fallback, col, mark: mark)
+        if let u = util {
+            let pct = Int((u * 100).rounded())
+            let w = text("\(pct)% usato", 18, y + 36, size: 12, weight: .semibold, color: col)
+            if u >= 1 { text("  limite raggiunto", 18 + w, y + 36, size: 12, weight: .semibold, color: .systemRed) }
+        } else {
+            text("uso non disponibile", 18, y + 36, size: 12, color: .tertiaryLabelColor)
+        }
+        text(sub, W - 18, y + 37, size: 11, color: .secondaryLabelColor, right: true)
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        let urgent: NSColor = c.weekLeft < 86400 ? .systemRed : (c.weekLeft < 2 * 86400 ? .systemOrange : .systemGreen)
         let W = bounds.width
-        // Riga 1: nome + tempo alla scadenza settimanale
-        urgent.setFill()
-        NSBezierPath(ovalIn: NSRect(x: 16, y: 11, width: 9, height: 9)).fill()
-        text(c.name, 31, 6, size: 14, weight: .semibold)
-        if c.isNext {
-            text("PROSSIMO", 31 + (c.name as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 14, weight: .semibold)]).width + 8,
-                 9, size: 9, weight: .bold, color: .systemOrange)
-        }
-        text(fmt(c.weekLeft), W - 16, 5, size: 16, weight: .semibold, color: urgent, right: true, mono: true)
-        // Riga 2: dettaglio settimana
-        text("Reset settimanale  \(c.weekDate)", 16, 29, size: 11, color: .secondaryLabelColor)
-        if let u = c.weekUtil {
-            text("uso \(Int((u * 100).rounded()))%  ·  tempo \(Int(c.weekUsed * 100))%", W - 16, 29, size: 11, color: .secondaryLabelColor, right: true)
-            bar(46, u, sev(u), h: 7)
-            // tacca: quanta settimana e' trascorsa (se l'uso e' a destra della tacca stai consumando troppo in fretta)
-            NSColor.labelColor.setFill()
-            NSBezierPath(rect: NSRect(x: 16 + (W - 32) * CGFloat(min(max(c.weekUsed, 0), 1)) - 1, y: 43, width: 2, height: 13)).fill()
-        } else {
-            text("\(Int(c.weekUsed * 100))% trascorso", W - 16, 29, size: 11, color: .secondaryLabelColor, right: true)
-            bar(46, c.weekUsed, urgent, h: 7)
-        }
-        // Riga 3: finestra 5h
-        if let t = c.winText {
-            let col: NSColor = c.winUtil != nil ? sev(c.winUtil!) : (c.winOpen ? .systemBlue : .tertiaryLabelColor)
-            text(c.winUtil != nil ? "Finestra 5h  ·  uso \(Int((c.winUtil! * 100).rounded()))%" : "Finestra 5h", 16, 66, size: 11, color: .secondaryLabelColor)
-            text(t, W - 16, 66, size: 11, weight: .medium, color: c.winOpen ? .labelColor : .secondaryLabelColor, right: true, mono: true)
-            bar(84, c.winUtil ?? c.winFrac, col, h: 5)
+        let worst = max(c.weekUtil ?? 0, c.winUtil ?? 0)
+        (c.weekUtil == nil && c.winUtil == nil ? NSColor.tertiaryLabelColor : sev(worst)).setFill()
+        NSBezierPath(ovalIn: NSRect(x: 18, y: 11, width: 10, height: 10)).fill()
+        let nw = text(c.name, 36, 7, size: 15, weight: .semibold)
+        if c.isActive { pill("IN USO", 36 + nw + 8, 9, .systemBlue) }
+
+        block(32, caption: "SETTIMANA",
+              right: "reset tra \(fmt(c.weekLeft))  ·  \(c.weekDate)",
+              util: c.weekUtil, sub: "\(Int(c.weekUsed * 100))% del tempo trascorso",
+              mark: c.weekUtil != nil ? c.weekUsed : nil, fallback: c.weekUsed, fallbackColor: .systemGray)
+        if let l = c.winLeft {
+            block(92, caption: "SESSIONE 5 ORE",
+                  right: c.winOpen ? "reset tra \(fmt(l))  ·  \(c.winClock ?? "")" : "riparte tra \(fmt(l))  ·  \(c.winClock ?? "")",
+                  util: c.winUtil, sub: c.winOpen ? "finestra aperta" : "finestra scaduta", mark: nil, fallback: 0, fallbackColor: .systemGray)
         }
     }
 }
@@ -178,33 +194,31 @@ class App: NSObject, NSApplicationDelegate {
         }
     }
 
-    // Barre in stile batteria: per account, sopra la saturazione 5h, sotto quella settimanale.
-    func statusImage(_ items: [(String, Double?, Double?)]) -> NSImage {
-        let bw: CGFloat = 46, blockW: CGFloat = 20 + bw + 10, H: CGFloat = 22
-        let img = NSImage(size: NSSize(width: blockW * CGFloat(items.count), height: H), flipped: false) { _ in
-            for (i, it) in items.enumerated() {
-                let x0 = blockW * CGFloat(i)
-                let lab = NSAttributedString(string: String(it.0.prefix(2)).uppercased(), attributes: [
-                    .font: NSFont.systemFont(ofSize: 8, weight: .semibold), .foregroundColor: NSColor.labelColor.withAlphaComponent(0.75)])
-                lab.draw(at: NSPoint(x: x0 + 1, y: (H - lab.size().height) / 2))
-                let r = NSRect(x: x0 + 20, y: 10, width: bw, height: 9)
-                let outline = NSBezierPath(roundedRect: r.insetBy(dx: 0.5, dy: 0.5), xRadius: 2.5, yRadius: 2.5)
-                NSColor.labelColor.withAlphaComponent(0.7).setStroke(); outline.lineWidth = 1; outline.stroke()
-                NSColor.labelColor.withAlphaComponent(0.7).setFill()
-                NSBezierPath(rect: NSRect(x: r.maxX, y: 12.5, width: 1.5, height: 4)).fill()
-                if let f = it.1 {
-                    sev(f).setFill()
-                    let inner = r.insetBy(dx: 2, dy: 2)
-                    NSBezierPath(roundedRect: NSRect(x: inner.minX, y: inner.minY, width: max(1.5, inner.width * CGFloat(min(f, 1))), height: inner.height),
-                                 xRadius: 1, yRadius: 1).fill()
-                }
-                let t = NSRect(x: x0 + 20, y: 4, width: bw, height: 3)
-                NSColor.labelColor.withAlphaComponent(0.18).setFill()
-                NSBezierPath(roundedRect: t, xRadius: 1.5, yRadius: 1.5).fill()
-                if let w = it.2 {
-                    sev(w).setFill()
-                    NSBezierPath(roundedRect: NSRect(x: t.minX, y: t.minY, width: max(2, t.width * CGFloat(min(w, 1))), height: t.height), xRadius: 1.5, yRadius: 1.5).fill()
-                }
+    // Barra a batteria dell'account in uso: sopra la sessione 5h, sotto la settimana.
+    func statusImage(_ it: (String, Double?, Double?)) -> NSImage {
+        let bw: CGFloat = 90, H: CGFloat = 22
+        let lab = NSAttributedString(string: it.0, attributes: [.font: NSFont.systemFont(ofSize: 10, weight: .semibold),
+                                                                 .foregroundColor: NSColor.labelColor.withAlphaComponent(0.85)])
+        let lw = ceil(lab.size().width)
+        let img = NSImage(size: NSSize(width: lw + 8 + bw + 4, height: H), flipped: false) { _ in
+            lab.draw(at: NSPoint(x: 0, y: (H - lab.size().height) / 2))
+            let x0 = lw + 8
+            let r = NSRect(x: x0, y: 9, width: bw, height: 11)
+            NSColor.labelColor.withAlphaComponent(0.7).setStroke()
+            let outline = NSBezierPath(roundedRect: r.insetBy(dx: 0.5, dy: 0.5), xRadius: 3, yRadius: 3); outline.lineWidth = 1; outline.stroke()
+            NSColor.labelColor.withAlphaComponent(0.7).setFill()
+            NSBezierPath(rect: NSRect(x: r.maxX, y: 12.5, width: 1.6, height: 4)).fill()
+            if let f = it.1 {
+                sev(f).setFill()
+                let inner = r.insetBy(dx: 2, dy: 2)
+                NSBezierPath(roundedRect: NSRect(x: inner.minX, y: inner.minY, width: max(2, inner.width * CGFloat(min(f, 1))), height: inner.height), xRadius: 1.5, yRadius: 1.5).fill()
+            }
+            let t = NSRect(x: x0, y: 3, width: bw, height: 3.5)
+            NSColor.labelColor.withAlphaComponent(0.2).setFill()
+            NSBezierPath(roundedRect: t, xRadius: 1.75, yRadius: 1.75).fill()
+            if let w = it.2 {
+                sev(w).setFill()
+                NSBezierPath(roundedRect: NSRect(x: t.minX, y: t.minY, width: max(3, t.width * CGFloat(min(w, 1))), height: t.height), xRadius: 1.75, yRadius: 1.75).fill()
             }
             return true
         }
@@ -215,6 +229,14 @@ class App: NSObject, NSApplicationDelegate {
     func refresh(fetch: Bool = true) {
         if fetch { fetchRemote(); fetchUsage() }
         let now = Date()
+        var activeName: String? = nil
+        if remoteHost() != nil { activeName = remoteList.first { $0.1 }?.0 }
+        else {
+            let cur = currentVSCodeDir()
+            activeName = loadAccounts().first { a in
+                let d = a.configDir.map { NSString(string: $0).expandingTildeInPath }
+                return d == cur }?.name
+        }
         let rows = loadAccounts().map { ($0, nextReset($0.anchor, now: now)) }.sorted { $0.1 < $1.1 }
         let m = NSMenu()
         var nextWindow: (String, Date)? = nil
@@ -222,8 +244,8 @@ class App: NSObject, NSApplicationDelegate {
             let (a, reset) = r
             let left = reset.timeIntervalSince(now)
             let u = usage[a.name]
-            var card = Card(name: a.name, weekLeft: left, weekDate: df.string(from: reset),
-                            weekUsed: 1 - left / week, isNext: i == 0, winText: nil, winFrac: 0, winOpen: false)
+            var card = Card(name: a.name, weekLeft: left, weekDate: df.string(from: reset), weekUsed: 1 - left / week,
+                            isActive: a.name == activeName, weekUtil: nil, winUtil: nil, winLeft: nil, winClock: nil, winOpen: false)
             if let u = u {
                 if let wr = u.weekReset, wr > now { card.weekUtil = u.weekUtil }
                 if let fr = u.fiveReset, fr > now { card.winUtil = u.fiveUtil }
@@ -231,16 +253,14 @@ class App: NSObject, NSApplicationDelegate {
             if let off = a.offset {
                 let base = cycleBase.addingTimeInterval(Double(off) * 60)
                 let start = base.addingTimeInterval(floor(now.timeIntervalSince(base) / cycle) * cycle)
-                let end = start.addingTimeInterval(windowLen)
+                var end = start.addingTimeInterval(windowLen)
+                if let fr = u?.fiveReset, fr > now { end = fr }          // dato reale, se disponibile
                 let nextSend = start.addingTimeInterval(cycle)
                 if now < end {
-                    card.winOpen = true
-                    card.winFrac = now.timeIntervalSince(start) / windowLen
-                    card.winText = "reset tra \(fmt(end.timeIntervalSince(now)))  ·  \(hm.string(from: end))"
+                    card.winOpen = true; card.winLeft = end.timeIntervalSince(now); card.winClock = hm.string(from: end)
                     if nextWindow == nil || end < nextWindow!.1 { nextWindow = (a.name, end) }
                 } else {
-                    card.winFrac = 1
-                    card.winText = "riparte \(hm.string(from: nextSend))  ·  tra \(fmt(nextSend.timeIntervalSince(now)))"
+                    card.winLeft = nextSend.timeIntervalSince(now); card.winClock = hm.string(from: nextSend)
                     if nextWindow == nil || nextSend < nextWindow!.1 { nextWindow = (a.name, nextSend) }
                 }
             }
@@ -277,14 +297,13 @@ class App: NSObject, NSApplicationDelegate {
             if let w = nextWindow { title += "  ⟳ \(w.0) \(fmt(w.1.timeIntervalSince(now)))" }
         }
         let now2 = Date()
-        let bars: [(String, Double?, Double?)] = loadAccounts().map { a in
+        let shown = loadAccounts().first { $0.name == activeName } ?? loadAccounts().first
+        if let a = shown, !usage.isEmpty {
             let u = usage[a.name]
             let five = (u?.fiveReset ?? .distantPast) > now2 ? u?.fiveUtil : nil
             let wk = (u?.weekReset ?? .distantPast) > now2 ? u?.weekUtil : nil
-            return (a.name, five, wk)
-        }
-        if usage.isEmpty { item.button?.image = nil; item.button?.title = title }
-        else { item.button?.title = ""; item.button?.image = statusImage(bars) }
+            item.button?.title = ""; item.button?.image = statusImage((a.name, five, wk))
+        } else { item.button?.image = nil; item.button?.title = title }
         item.button?.toolTip = title
         m.addItem(.separator())
         let edit = NSMenuItem(title: "Modifica account…", action: #selector(openConfig), keyEquivalent: "")
