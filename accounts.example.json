@@ -1,0 +1,5 @@
+[
+  {"name": "account-a", "anchor": "2026-12-03T19:00:00+01:00", "offset": 0},
+  {"name": "account-b", "anchor": "2026-12-01T07:00:00+01:00", "offset": 102, "configDir": "~/.claude-account-b"},
+  {"name": "account-c", "anchor": "2026-11-29T05:00:00+01:00", "offset": 203, "configDir": "~/.claude-account-c"}
+]

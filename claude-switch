@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""claude-switch: cambia l'account Claude usato dall'estensione VS Code.
+  claude-switch list            elenca gli account e quello attivo
+  claude-switch <nome>          attiva l'account in VS Code
+  claude-switch login <nome>    login una tantum per l'account (poi non serve piu')
+"""
+import json, os, sys, glob, subprocess, shutil
+HOME = os.path.expanduser("~")
+ACC = os.path.join(HOME, "ClaudeResetWidget", "accounts.json")
+SET = os.path.join(HOME, "Library/Application Support/Code/User/settings.json")
+VAR = "CLAUDE_CONFIG_DIR"
+
+def accounts():
+    out = {}
+    for a in json.load(open(ACC)):
+        d = a.get("configDir")
+        out[a["name"]] = os.path.expanduser(d) if d else None   # None = ~/.claude predefinito
+    return out
+
+def current(settings):
+    for e in settings.get("claudeCode.environmentVariables", []):
+        if e.get("name") == VAR: return e.get("value")
+    return None
+
+def load():
+    try: return json.load(open(SET))
+    except Exception as e: sys.exit(f"settings.json di VS Code non leggibile ({e}); non modifico nulla.")
+
+def claude_bin():
+    c = sorted(glob.glob(HOME + "/.vscode/extensions/anthropic.claude-code-*/resources/native-binary/claude"))
+    return shutil.which("claude") or (c[-1] if c else sys.exit("binario claude non trovato"))
+
+acc = accounts(); cmd = sys.argv[1:] or ["list"]
+if cmd[0] == "list":
+    cur = current(load())
+    for n, d in acc.items(): print(("* " if d == cur else "  ") + n)
+elif cmd[0] == "login" and len(cmd) == 2 and cmd[1] in acc:
+    env = dict(os.environ)
+    if acc[cmd[1]]: os.makedirs(acc[cmd[1]], exist_ok=True); env[VAR] = acc[cmd[1]]
+    else: env.pop(VAR, None)
+    sys.exit(subprocess.call([claude_bin(), "auth", "login"], env=env, cwd="/tmp"))
+elif cmd[0] in acc:
+    s = load(); d = acc[cmd[0]]
+    if d and not os.path.isdir(d): sys.exit(f"{cmd[0]}: non ancora autenticato. Esegui: claude-switch login {cmd[0]}")
+    shutil.copy(SET, SET + ".bak")
+    ev = [e for e in s.get("claudeCode.environmentVariables", []) if e.get("name") != VAR]
+    if d: ev.append({"name": VAR, "value": d})
+    if ev: s["claudeCode.environmentVariables"] = ev
+    else: s.pop("claudeCode.environmentVariables", None)
+    json.dump(s, open(SET, "w"), indent=4)
+    print(f"VS Code ora usa: {cmd[0]}  (apri una nuova conversazione o ricarica la finestra)")
+else:
+    sys.exit(__doc__)
