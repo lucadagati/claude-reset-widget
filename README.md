@@ -151,7 +151,7 @@ A Claude subscription has a rolling **5-hour session window** that starts with t
 
 - **Weekly reset countdown** – computed locally. `accounts.json` stores *one* known weekly-reset instant (`anchor`) per account; the next reset is `anchor + 7 × n days`, rolling forward forever.
 - **5-hour window and weekly utilization** – reported by Claude Code itself. When run with `--output-format stream-json --verbose`, `claude -p` emits a `rate_limit_event` containing `unifiedWindows.five_hour` and `unifiedWindows.seven_day`, each with a `utilization` (fraction of the window used, usually 0–1, may exceed 1) and a `resetsAt` (epoch seconds). These are taken from the server's `anthropic-ratelimit-unified-*` response headers, so they reflect the *real* account state, including usage from other devices and people sharing the account.
-- **Freshness** – the data is captured each time Buongiorno pings an account (every 5 h 05 min). Usage between pings is not reflected until the next one. See [limitations](#limitations-and-caveats).
+- **Freshness** – besides each ping, `poll_usage.py` refreshes every account every 2 minutes from the OAuth usage endpoint used by Claude Code's `/usage` (`GET https://api.anthropic.com/api/oauth/usage`, returns percentages that are stored as fractions). It sends no message and uses no quota; accounts whose saved token has expired are skipped until the CLI refreshes it.
 - If a stored reset time is already in the past, the widget treats that reading as stale and falls back to its schedule-based estimate for that window.
 
 Example usage file (`/var/lib/buongiorno/usage/account-a.json`):
@@ -431,6 +431,7 @@ servers.example.json       Widget servers template (tailnet IPs)
 buongiorno/
   buongiorno.sh            Timer logic + minimal Claude request
   parse_usage.py           Extracts utilization from stream-json output
+  poll_usage.py            Refreshes utilization every 2 min from the OAuth usage endpoint
   accounts.example.conf    Server accounts template
   install.sh / uninstall.sh / next_runs.sh
   systemd/                 buongiorno.service, buongiorno.timer
@@ -452,7 +453,7 @@ docs/                      Screenshots used by this README
 ## Limitations and caveats
 
 - **Undocumented fields.** `rate_limit_event.unifiedWindows` comes from Claude Code's stream output, not a documented public API; it may change between versions. The widget falls back to schedule-based estimates if usage data is missing or stale.
-- **Data is as fresh as the last ping** (every 5 h 05 min per account). Usage in between is not visible until the next ping. A lighter, more frequent probe is possible but consumes a little quota each time.
+- **Usage endpoint is undocumented.** `/api/oauth/usage` is what Claude Code's `/usage` calls; it may change. If it fails, the files keep the last value (from the previous poll or ping).
 - **Weekly anchors are fixed UTC offsets** (e.g. `+01:00`). Around daylight-saving changes the displayed reset can be off by one hour until you update the anchor.
 - Account switching affects **all VS Code windows** at once and only **new** conversations.
 - Several accounts logged into the same human may share quotas depending on your organization plan; the widget shows what the API reports per login.

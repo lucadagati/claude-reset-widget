@@ -3,7 +3,7 @@
 set -e
 cd "$(dirname "$0")"
 install -D -m 755 buongiorno.sh /opt/buongiorno/buongiorno.sh
-install -m 755 parse_usage.py /opt/buongiorno/parse_usage.py
+install -m 755 parse_usage.py poll_usage.py /opt/buongiorno/
 mkdir -p /var/lib/buongiorno/usage
 # accounts.conf: usa quello locale se c'e', altrimenti l'esempio (solo se non esiste gia' sul sistema)
 if [ -f accounts.conf ]; then install -m 644 accounts.conf /opt/buongiorno/accounts.conf

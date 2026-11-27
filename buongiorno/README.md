@@ -15,6 +15,7 @@ See the [main README](../README.md) for the architecture, the data flow and how 
 |---|---|
 | `buongiorno.sh` | Main script (installed to `/opt/buongiorno/`) |
 | `parse_usage.py` | Extracts utilization from the stream output |
+| `poll_usage.py` | Refreshes utilization every 2 min from the OAuth usage endpoint (no message, no quota) |
 | `accounts.example.conf` | Template for `accounts.conf` (`name|config_dir|offset_min`) |
 | `systemd/` | Service and timer units |
 | `install.sh` / `uninstall.sh` | Install/update or remove everything |

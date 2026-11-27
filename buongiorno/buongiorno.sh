@@ -38,6 +38,10 @@ send() {  # $1=nome $2=config_dir
 # so every account keeps exactly one valid login. Runs every minute because the timer does.
 [ -x /usr/local/bin/claude-switch-remote ] && /usr/local/bin/claude-switch-remote sync >/dev/null 2>&1
 
+# Utilizzo reale 5h/settimana per il widget, ogni USAGE_POLL_MIN minuti (nessun messaggio, nessuna quota).
+USAGE_POLL_MIN=2
+[ $(( $(date +%s) / 60 % USAGE_POLL_MIN )) -eq 0 ] && python3 /opt/buongiorno/poll_usage.py "$CONF" "$USAGE_DIR" 2>>"$LOG"
+
 FORCE=0; [ "$1" = "--force" ] && { FORCE=1; shift; }   # --force [nome]
 ONLY="$1"
 while IFS='|' read -r name dir offset; do
