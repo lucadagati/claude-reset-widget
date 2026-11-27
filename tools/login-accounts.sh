@@ -17,7 +17,7 @@
 set -euo pipefail
 TARGET=${1:?usage: DEFAULT_NAME=... $0 TARGET extra-account...}; shift; EXTRA=("$@")
 DEFAULT_NAME=${DEFAULT_NAME:?set DEFAULT_NAME to the account that must be the default login}
-BIN='B=$(ls -d ~/.local/bin/claude ~/.vscode-server/extensions/anthropic.claude-code-*/resources/native-binary/claude 2>/dev/null | head -1)'
+BIN='B=$(ls -d ~/.local/bin/claude ~/.vscode-server/extensions/anthropic.claude-code-*/resources/native-binary/claude ~/.vscode/extensions/anthropic.claude-code-*/resources/native-binary/claude 2>/dev/null | tail -1)'
 OFFSETS=(0 102 203 305)
 
 if [ -z "${SKIP_DEFAULT:-}" ]; then
