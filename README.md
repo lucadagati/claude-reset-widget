@@ -219,6 +219,15 @@ From the menu-bar widget on M, add the server to `servers.json` with `"remoteSwi
 
 After switching, **open a new Claude conversation** (or run *Developer: Reload Window*). Conversations already open keep the account they started with.
 
+### Live switching of a running session (Linux servers)
+
+On Linux servers the switch also works **inside an already running conversation**: no new conversation, no reload. `claude-switch-remote` points the extension (once) at a dedicated *live* config dir, `~/.claude-live`, whose `.credentials.json` is a **symlink to the selected account's credentials**. A running Claude process re-reads that path on its next request, so it continues the same conversation with the other account's tokens (verified: the rate-limit windows reported by the API change to those of the new account).
+
+- History and user config are shared: `projects`, `settings.json`, `CLAUDE.md`, `commands`, `agents`, `skills`, `hooks` are symlinked from the default `~/.claude`, so conversations are visible whichever account is active.
+- **Token refresh.** When Claude refreshes tokens it replaces the symlink with a regular file, which would leave the account's own file with a rotated-away (invalid) refresh token. `claude-switch-remote sync` (run before every switch, and every minute by Buongiorno when installed) copies the fresh tokens back to the account file and restores the symlink, so each account always has exactly one valid login.
+- Sessions started *before* live mode was enabled keep the account they started with until you open one new conversation; after that, switching is instant.
+- macOS keeps credentials in the Keychain, not in a file, so live switching is **not available for a local VS Code on a Mac**; there the switch applies to new conversations.
+
 ### Logging an account in (once)
 
 ```bash

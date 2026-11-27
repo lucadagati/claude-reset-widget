@@ -34,6 +34,10 @@ send() {  # $1=nome $2=config_dir
   return 1
 }
 
+# Live account switching (VS Code): save back tokens refreshed by a running session and restore the symlink,
+# so every account keeps exactly one valid login. Runs every minute because the timer does.
+[ -x /usr/local/bin/claude-switch-remote ] && /usr/local/bin/claude-switch-remote sync >/dev/null 2>&1
+
 FORCE=0; [ "$1" = "--force" ] && { FORCE=1; shift; }   # --force [nome]
 ONLY="$1"
 while IFS='|' read -r name dir offset; do

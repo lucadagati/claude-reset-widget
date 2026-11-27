@@ -1,14 +1,24 @@
 #!/usr/bin/env python3
-"""claude-switch-remote: cambia account Claude per l'estensione VS Code su un server (Remote-SSH).
-  claude-switch-remote list | <nome> | login <nome>
+"""claude-switch-remote: live account switching for the Claude Code VS Code extension on a Linux server.
+
+  claude-switch-remote list | <name> | sync | login <name>
+
+How it works: the extension is pointed (once) at a dedicated "live" config dir (~/.claude-live). Its
+.credentials.json is a symlink to the selected account's credentials, so already-running Claude processes
+pick up the new tokens on their next request (verified). When Claude refreshes tokens it replaces the symlink
+with a regular file; `sync` (run before every switch, and by cron/Buongiorno) copies those fresh tokens back to
+the account's own file and restores the symlink, so every account keeps exactly ONE valid copy of its login.
+
 Account list (name|config_dir|offset; "default" = ~/.claude), first found of:
   $CLAUDE_ACCOUNTS_CONF, ~/.claude-accounts.conf, /etc/claude-accounts.conf, /opt/buongiorno/accounts.conf"""
-import json, os, sys, glob, subprocess
+import json, os, sys, glob, shutil, subprocess
+
 VAR = "CLAUDE_CONFIG_DIR"
 HOME = os.path.expanduser("~")
+LIVE = HOME + "/.claude-live"
+SHARED = ["projects", "settings.json", "CLAUDE.md", "commands", "agents", "skills", "hooks"]   # history + user config shared by all accounts
 CONF = next((c for c in [os.environ.get("CLAUDE_ACCOUNTS_CONF"), HOME + "/.claude-accounts.conf", "/etc/claude-accounts.conf",
                          "/opt/buongiorno/accounts.conf"] if c and os.path.exists(c)), None) or sys.exit("accounts.conf not found")
-import shutil
 CLAUDE = shutil.which("claude") or next(iter(glob.glob(HOME + "/.local/bin/claude") + sorted(glob.glob(
     HOME + "/.vscode-server/extensions/anthropic.claude-code-*/resources/native-binary/claude"))), None) or sys.exit("claude binary not found")
 
@@ -20,37 +30,83 @@ def accounts():
             n, d, *_ = l.split("|"); out[n] = None if d == "default" else os.path.expanduser(os.path.expandvars(d))
     return out
 
-def settings_files():   # impostazioni "machine" dei VS Code server presenti
+def cred_path(d):  return (d or HOME + "/.claude") + "/.credentials.json"
+def info_path(d):  return HOME + "/.claude.json" if d is None else d + "/.claude.json"
+def current():
+    try: return open(LIVE + "/.current").read().strip()
+    except OSError: return None
+
+def machine_settings():
     dirs = glob.glob(HOME + "/.vscode-server*/data/Machine") + glob.glob(HOME + "/.openvscode-server/data/Machine")
-    if not dirs:   # VS Code server not created yet: prepare the default location
+    if not dirs:
         os.makedirs(HOME + "/.vscode-server/data/Machine", exist_ok=True); dirs = [HOME + "/.vscode-server/data/Machine"]
     return [p + "/settings.json" for p in dirs]
 
-def read(p):
-    try: return json.load(open(p))
-    except FileNotFoundError: return {}
-    except Exception as e: sys.exit(f"{p} non leggibile ({e}); non modifico nulla.")
+def ensure_vscode_setting():
+    for p in machine_settings():
+        try: s = json.load(open(p))
+        except FileNotFoundError: s = {}
+        except Exception as e: sys.exit(f"{p} not readable ({e}); not touching it.")
+        ev = [e for e in s.get("claudeCode.environmentVariables", []) if e.get("name") != VAR] + [{"name": VAR, "value": LIVE}]
+        if s.get("claudeCode.environmentVariables") != ev:
+            s["claudeCode.environmentVariables"] = ev
+            if os.path.exists(p): shutil.copy(p, p + ".bak")
+            json.dump(s, open(p, "w"), indent=4); print("VS Code setting ->", LIVE, "(", p, ")")
 
-def current(s):
-    return next((e["value"] for e in s.get("claudeCode.environmentVariables", []) if e.get("name") == VAR), None)
+def atomic_write(path, data, mode=0o600):
+    tmp = path + ".tmp"; fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+    with os.fdopen(fd, "w") as f: f.write(data)
+    os.replace(tmp, path)
 
-acc = accounts(); cmd = sys.argv[1:] or ["list"]; files = settings_files()
+def setup_live():
+    os.makedirs(LIVE, mode=0o700, exist_ok=True)
+    for n in SHARED:   # share history/config with the default dir (created lazily by Claude otherwise)
+        src, dst = HOME + "/.claude/" + n, LIVE + "/" + n
+        if os.path.exists(src) and not os.path.lexists(dst): os.symlink(src, dst)
+
+def sync(acc):
+    """Fresh tokens written by a running Claude (regular file) -> back to the account file, then relink."""
+    cur = current(); live = LIVE + "/.credentials.json"
+    if not cur or cur not in acc or not os.path.lexists(live): return False
+    target = cred_path(acc[cur])
+    if os.path.islink(live):
+        if os.path.realpath(live) == os.path.realpath(target): return False
+    else:
+        shutil.copy2(live, target + ".tmp"); os.chmod(target + ".tmp", 0o600); os.replace(target + ".tmp", target)
+        print(f"sync: refreshed tokens saved back to '{cur}'")
+    os.remove(live); os.symlink(target, live); return True
+
+def use(name, acc):
+    d = acc[name]
+    if not os.path.isfile(cred_path(d)): sys.exit(f"{name}: not logged in. Run: claude-switch-remote login {name}")
+    setup_live(); sync(acc)
+    live = LIVE + "/.credentials.json"
+    if os.path.lexists(live): os.remove(live)
+    os.symlink(cred_path(d), live)
+    # identity info (email/org shown by the extension) from the account; keep the live dir's own caches
+    try: live_info = json.load(open(LIVE + "/.claude.json"))
+    except Exception: live_info = {}
+    try: acc_info = json.load(open(info_path(d)))
+    except Exception: acc_info = {}
+    for k in ("oauthAccount", "userID"):
+        if k in acc_info: live_info[k] = acc_info[k]
+    live_info["hasCompletedOnboarding"] = True
+    atomic_write(LIVE + "/.claude.json", json.dumps(live_info))
+    atomic_write(LIVE + "/.current", name + "\n", 0o644)
+    ensure_vscode_setting()
+    print(f"live account -> {name}  (running Claude sessions use it from their next request)")
+
+acc = accounts(); cmd = sys.argv[1:] or ["list"]
 if cmd[0] == "list":
-    cur = current(read(files[0])) if files else None
-    for n, d in acc.items(): print(("* " if d == cur else "  ") + n)
+    cur = current()
+    for n in acc: print(("* " if n == cur else "  ") + n)
+elif cmd[0] == "sync":
+    sync(acc)
 elif cmd[0] == "login" and len(cmd) == 2 and cmd[1] in acc:
     env = dict(os.environ); env.pop(VAR, None)
     if acc[cmd[1]]: os.makedirs(acc[cmd[1]], exist_ok=True); env[VAR] = acc[cmd[1]]
     sys.exit(subprocess.call([CLAUDE, "auth", "login"], env=env, cwd="/tmp"))
 elif cmd[0] in acc:
-    d = acc[cmd[0]]
-    if d and not os.path.isdir(d): sys.exit(f"{cmd[0]}: non autenticato. Esegui: claude-switch-remote login {cmd[0]}")
-    for p in files:
-        s = read(p); ev = [e for e in s.get("claudeCode.environmentVariables", []) if e.get("name") != VAR]
-        if d: ev.append({"name": VAR, "value": d})
-        if ev: s["claudeCode.environmentVariables"] = ev
-        else: s.pop("claudeCode.environmentVariables", None)
-        json.dump(s, open(p, "w"), indent=4); print("aggiornato", p)
-    print(f"VS Code (server) ora usa: {cmd[0]} -> apri una nuova conversazione o ricarica la finestra")
+    use(cmd[0], acc)
 else:
     sys.exit(__doc__)
