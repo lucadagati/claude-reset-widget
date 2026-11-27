@@ -219,14 +219,45 @@ From the menu-bar widget on M, add the server to `servers.json` with `"remoteSwi
 
 After switching, **open a new Claude conversation** (or run *Developer: Reload Window*). Conversations already open keep the account they started with.
 
+### What a switch affects (read this first)
+
+An account switch changes **which credentials the Claude process of the VS Code extension uses**. Whether a conversation that is *already open* follows the switch depends on where VS Code's Claude process runs:
+
+| Where the Claude process runs | Credentials stored in | Conversation already open | New conversation |
+|---|---|---|---|
+| **Linux server** (VS Code Remote-SSH), after *live mode* is enabled | files | **follows the switch** on its next request | uses the new account |
+| **Linux server**, process started *before* live mode was enabled | files | keeps its old account | the extension may **reuse the same process**, so reload the window once (see below) |
+| **macOS** (local VS Code on a Mac) | Keychain | **does not follow**: the account is fixed when the process starts | uses the account selected **at that moment** |
+
+Practical rules:
+
+- **On macOS: select the account first, then open the new session.** Selecting an account *after* the session is open has no effect on that session. (Typical mistake: open a session, switch in the widget, ask "which account?", and the answer is still the old account.)
+- **Pressing "new conversation" does not always start a new process.** The extension can reuse the running `claude` process, which keeps the environment it started with. If a session does not pick up a setting, run *Developer: Reload Window* (Cmd+Shift+P) once; this restarts the extension's processes.
+- Each Claude process reads its environment only **at start**; the VS Code setting `claudeCode.environmentVariables` is applied to processes started afterwards.
+- On Linux the `claude` processes started before live mode (the setting is written on the first switch) have no `CLAUDE_CONFIG_DIR`; a window reload is needed once, after that switching is instant.
+
 ### Live switching of a running session (Linux servers)
 
 On Linux servers the switch also works **inside an already running conversation**: no new conversation, no reload. `claude-switch-remote` points the extension (once) at a dedicated *live* config dir, `~/.claude-live`, whose `.credentials.json` is a **symlink to the selected account's credentials**. A running Claude process re-reads that path on its next request, so it continues the same conversation with the other account's tokens (verified: the rate-limit windows reported by the API change to those of the new account).
 
 - History and user config are shared: `projects`, `settings.json`, `CLAUDE.md`, `commands`, `agents`, `skills`, `hooks` are symlinked from the default `~/.claude`, so conversations are visible whichever account is active.
 - **Token refresh.** When Claude refreshes tokens it replaces the symlink with a regular file, which would leave the account's own file with a rotated-away (invalid) refresh token. `claude-switch-remote sync` (run before every switch, and every minute by Buongiorno when installed) copies the fresh tokens back to the account file and restores the symlink, so each account always has exactly one valid login.
-- Sessions started *before* live mode was enabled keep the account they started with until you open one new conversation; after that, switching is instant.
-- macOS keeps credentials in the Keychain, not in a file, so live switching is **not available for a local VS Code on a Mac**; there the switch applies to new conversations.
+- macOS keeps credentials in the Keychain, not in a file, so live switching is **not available for a local VS Code on a Mac**.
+
+### Which account is this session using? (bilingual banner)
+
+`claude-account-banner` is a Claude Code **hook** that shows one line, in English and Italian, with the account whose tokens the session uses, at session start and **every time the active account changes** between two prompts:
+
+```
+🔑 Tokens in use / Token in uso: account-b · live
+🔑 Tokens in use / Token in uso: account-b · fixed until a new session / fisso fino a nuova sessione
+```
+
+- `live` = Linux live mode (the line updates when you switch); `fixed…` = the account is fixed for this session (macOS, or a process that predates live mode).
+- The same information is also given to the model as context, so asking "which account are you using?" gets the right answer.
+- The account is detected from what the process actually uses (the symlink target in live mode, `CLAUDE_CONFIG_DIR` otherwise), not from the widget's selection.
+- Install once per machine: `claude-account-banner --install` registers the hooks in the `settings.json` of `~/.claude`, `~/.claude-live` and every `~/.claude-*` dir (idempotent; the previous file is saved once as `settings.json.bak-banner`). On servers copy it next to `claude-switch-remote`; on a Mac keep it in `~/ClaudeResetWidget`.
+- Note: the hook output is delivered to Claude Code as a user-visible *system message*; how prominently the VS Code panel renders it depends on the extension version.
 
 ### Logging an account in (once)
 
@@ -382,7 +413,8 @@ Without a `servers.json` the widget still works as a plain countdown with local 
 ```
 main.swift                 Menu-bar widget (AppKit, single file)
 claude-switch              Switch the account used by local VS Code
-claude-switch-remote       Same, for a VS Code server over Remote-SSH (any user)
+claude-switch-remote       Live account switching on a Linux server (VS Code Remote-SSH, any user)
+claude-account-banner      Hook: bilingual one-line banner with the account in use
 accounts.example.json      Widget accounts template
 servers.example.json       Widget servers template (tailnet IPs)
 buongiorno/

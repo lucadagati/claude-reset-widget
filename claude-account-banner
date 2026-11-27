@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+"""claude-account-banner: Claude Code hook that tells you (EN/IT, one line) which account's tokens the session uses.
+
+  Hook mode (stdin = hook JSON): prints a systemMessage shown to the user + additionalContext for the model,
+    at session start and whenever the active account changes between two prompts.
+  claude-account-banner --install [CONFIG_DIR ...]   register the hooks in settings.json of the given config dirs
+      (default: ~/.claude, ~/.claude-live and every ~/.claude-* dir). Idempotent; settings.json is backed up once.
+  claude-account-banner --status                     print the line for the current environment
+Account names come from the accounts list used by claude-switch-remote (server) or ~/ClaudeResetWidget/accounts.json (Mac)."""
+import json, os, sys, glob, shutil
+
+HOME = os.path.expanduser("~")
+LIVE = HOME + "/.claude-live"
+STATE = HOME + "/.claude-account-banner.state.json"
+
+def accounts():
+    for c in [os.environ.get("CLAUDE_ACCOUNTS_CONF"), HOME + "/.claude-accounts.conf", "/etc/claude-accounts.conf", "/opt/buongiorno/accounts.conf"]:
+        if c and os.path.exists(c):
+            out = {}
+            for l in open(c):
+                l = l.strip()
+                if l and not l.startswith("#"):
+                    n, d, *_ = l.split("|"); out[n] = None if d == "default" else os.path.expanduser(os.path.expandvars(d))
+            return out
+    try:
+        return {a["name"]: (os.path.expanduser(a["configDir"]) if a.get("configDir") else None) for a in json.load(open(HOME + "/ClaudeResetWidget/accounts.json"))}
+    except Exception:
+        return {}
+
+def cred(d): return (d or HOME + "/.claude") + "/.credentials.json"
+
+def identify():
+    """-> (account name or '?', mode 'live' | 'fixed')"""
+    acc = accounts(); cfg = os.environ.get("CLAUDE_CONFIG_DIR")
+    if cfg and os.path.realpath(cfg) == os.path.realpath(LIVE):
+        link = LIVE + "/.credentials.json"
+        if os.path.islink(link):
+            t = os.path.realpath(link)
+            for n, d in acc.items():
+                if os.path.realpath(cred(d)) == t: return n, "live"
+        try: return open(LIVE + "/.current").read().strip() or "?", "live"
+        except OSError: return "?", "live"
+    for n, d in acc.items():
+        if (d is None and not cfg) or (d and cfg and os.path.realpath(d) == os.path.realpath(cfg)): return n, "fixed"
+    return "?", "fixed"
+
+def line(name, mode):
+    tail = "live" if mode == "live" else "fixed until a new session / fisso fino a nuova sessione"
+    return f"\U0001F511 Tokens in use / Token in uso: {name} · {tail}"
+
+def hook():
+    try: inp = json.load(sys.stdin)
+    except Exception: inp = {}
+    ev, sid = inp.get("hook_event_name", "UserPromptSubmit"), inp.get("session_id", "?")
+    name, mode = identify()
+    try: st = json.load(open(STATE))
+    except Exception: st = {}
+    if ev != "SessionStart" and st.get(sid) == name: return          # unchanged: stay quiet
+    st[sid] = name; st = dict(list(st.items())[-50:])
+    try: json.dump(st, open(STATE, "w"))
+    except OSError: pass
+    ctx = (f"Claude account whose tokens this session is using right now: {name} ({mode} mode). "
+           "If asked which account you are on, answer with this account name.")
+    print(json.dumps({"systemMessage": line(name, mode),
+                      "hookSpecificOutput": {"hookEventName": ev, "additionalContext": ctx}}))
+
+def install(dirs):
+    me = os.path.realpath(__file__)
+    for d in dirs:
+        p = d + "/settings.json"; real = os.path.realpath(p)
+        try: s = json.load(open(real)) if os.path.exists(real) else {}
+        except Exception as e: print(f"skip {p}: not valid JSON ({e})"); continue
+        h = s.setdefault("hooks", {}); changed = False
+        for ev, matcher in (("SessionStart", "startup|resume|clear"), ("UserPromptSubmit", None)):
+            lst = h.setdefault(ev, [])
+            if any(me in x.get("command", "") for g in lst for x in g.get("hooks", [])): continue
+            g = {"hooks": [{"type": "command", "command": me}]}
+            if matcher: g["matcher"] = matcher
+            lst.append(g); changed = True
+        if changed:
+            os.makedirs(os.path.dirname(real), exist_ok=True)
+            if os.path.exists(real) and not os.path.exists(real + ".bak-banner"): shutil.copy2(real, real + ".bak-banner")
+            json.dump(s, open(real, "w"), indent=2); print("hooks installed in", p)
+        else: print("already installed in", p)
+
+if len(sys.argv) > 1 and sys.argv[1] == "--install":
+    dirs = sys.argv[2:] or [HOME + "/.claude"] + ([LIVE] if os.path.isdir(LIVE) else []) + [d for d in sorted(glob.glob(HOME + "/.claude-*")) if os.path.isdir(d) and not d.endswith((".old", "live"))]
+    install(dirs)
+elif len(sys.argv) > 1 and sys.argv[1] == "--status":
+    print(line(*identify()))
+else:
+    hook()
