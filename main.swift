@@ -137,6 +137,8 @@ struct Server: Decodable {
     let user: String?; let key: String?       // ssh user, optional private key
     let sudo: Bool?                           // run claude-switch-remote through sudo
     let remoteSwitch: Bool?                   // card clicks switch the account ON this server
+    let buongiorno: Bool?                     // this server runs Buongiorno: usage is always read from it
+    let switchPath: String?                   // path of claude-switch-remote on the server
 }
 let serversPath = NSString(string: "~/ClaudeResetWidget/servers.json").expandingTildeInPath
 let selectedPath = NSString(string: "~/ClaudeResetWidget/server_selected.txt").expandingTildeInPath
@@ -151,6 +153,7 @@ func selectedServer() -> Server? {
     let n = (try? String(contentsOfFile: selectedPath, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
     return l.first { $0.name == n } ?? l[0]
 }
+func usageServer() -> Server? { loadServers().first { $0.buongiorno == true } ?? selectedServer() }
 func remoteServer() -> Server? { let s = selectedServer(); return s?.remoteSwitch == true ? s : nil }
 
 func sshRun(_ sv: Server, _ cmd: String) -> String? {
@@ -164,7 +167,7 @@ func sshRun(_ sv: Server, _ cmd: String) -> String? {
     return p.terminationStatus == 0 ? String(data: d, encoding: .utf8) : nil
 }
 func switchCmd(_ sv: Server, _ args: String) -> String {
-    (sv.sudo == true ? "sudo " : "") + "/usr/local/bin/claude-switch-remote \(args)"
+    (sv.sudo == true ? "sudo " : "") + (sv.switchPath ?? "/usr/local/bin/claude-switch-remote") + " \(args)"
 }
 
 class App: NSObject, NSApplicationDelegate {
@@ -183,7 +186,7 @@ class App: NSObject, NSApplicationDelegate {
 
     var usage: [String: Usage] = [:]
     func fetchUsage() {
-        guard let srv = selectedServer() else { return }
+        guard let srv = usageServer() else { return }
         DispatchQueue.global().async { [weak self] in
             guard let out = sshRun(srv, "grep -H '' /var/lib/buongiorno/usage/*.json") else { return }
             var res: [String: Usage] = [:]
@@ -200,7 +203,7 @@ class App: NSObject, NSApplicationDelegate {
                                   updated: Date(timeIntervalSince1970: (j["updated"] as? Double) ?? 0))
             }
             DispatchQueue.main.async {
-                guard let s = self, selectedServer()?.name == srv.name else { return }
+                guard let s = self, usageServer()?.name == srv.name else { return }
                 if "\(res)" != "\(s.usage)" { s.usage = res; s.refresh(fetch: false) }
             }
         }
@@ -249,7 +252,7 @@ class App: NSObject, NSApplicationDelegate {
     @objc func selectServer(_ s: NSMenuItem) {
         guard let n = s.representedObject as? String else { return }
         try? n.write(toFile: selectedPath, atomically: true, encoding: .utf8)
-        usage = [:]; remoteList = []
+        remoteList = []
         refresh()
     }
 

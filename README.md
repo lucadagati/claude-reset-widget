@@ -290,7 +290,22 @@ Key-based SSH must work non-interactively (`ssh -o BatchMode=yes <user>@<tailnet
 
 The submenu shows each server's live status from the Tailscale CLI, matched by IP: `●` online, `○` offline, `·` unknown. Your choice is remembered in `server_selected.txt`; switching server instantly reloads usage (and the account list, if remote switching is enabled).
 
-### 4. (Optional) Switch accounts on the server from the widget
+### 4. (Optional) Use all your accounts on other servers
+
+Buongiorno only needs to run on **one** server. Other servers (used through VS Code Remote-SSH) only need the logins and the switch script:
+
+```bash
+# copy the logins of all accounts from the main server (SKIP = accounts already logged in as ~/.claude there)
+tools/copy-accounts.sh root@<main-tailnet-ip> dev@<other-tailnet-ip> "" account-b
+# install the switch script for that user
+scp claude-switch-remote dev@<other-tailnet-ip>:/tmp/ && ssh dev@<other-tailnet-ip> 'mkdir -p ~/.local/bin && install -m 755 /tmp/claude-switch-remote ~/.local/bin/'
+```
+
+`copy-accounts.sh` copies only the OAuth credentials and minimal account info, through the SSH pipe (nothing is written locally or committed), into `~/.claude-<name>/` on the target and writes `~/.claude-accounts.conf`. An existing default login on the target is left untouched. Caveat: using the same login on several machines at once may invalidate a copy (token refresh); if an account asks to log in again, re-login there.
+
+If your SSH key has a passphrase, load it once so the widget can use it non-interactively: `ssh-add --apple-use-keychain /path/to/key` (on every Mac running the widget).
+
+### 5. (Optional) Switch accounts on the server from the widget
 
 ```bash
 scp claude-switch-remote root@<tailnet-ip>:/usr/local/bin/ && ssh root@<tailnet-ip> chmod +x /usr/local/bin/claude-switch-remote
@@ -330,8 +345,9 @@ account-c|/root/.claude-account-c|203
 
 ```json
 [
-  {"name": "server-1", "host": "100.64.0.10", "user": "root"},
-  {"name": "server-2", "host": "100.64.0.11", "user": "ops", "key": "~/.ssh/id_ed25519_server2", "sudo": true, "remoteSwitch": true}
+  {"name": "main", "host": "100.64.0.10", "user": "root", "buongiorno": true},
+  {"name": "dev-box", "host": "100.64.0.11", "user": "dev", "key": "~/.ssh/id_ed25519_dev",
+   "switchPath": "~/.local/bin/claude-switch-remote", "remoteSwitch": true}
 ]
 ```
 
@@ -342,6 +358,8 @@ account-c|/root/.claude-account-c|203
 | `user` | SSH user (omit to use your default) |
 | `key` | Private key to use (`IdentitiesOnly`); omit to use your normal SSH configuration |
 | `sudo` | Run `claude-switch-remote` through passwordless `sudo` (needed when `user` is not root) |
+| `buongiorno` | `true` on the server that runs Buongiorno: **usage is always read from it**, whichever server is selected, so the bars stay visible on servers without Buongiorno |
+| `switchPath` | Where `claude-switch-remote` lives on that server (default `/usr/local/bin/claude-switch-remote`; use `~/.local/bin/claude-switch-remote` for a non-root user) |
 | `remoteSwitch` | `true`: clicking a card switches the account **on this server** (VS Code over Remote-SSH). `false`/omitted: clicking switches the local VS Code |
 
 Without a `servers.json` the widget still works as a plain countdown with local account switching.
@@ -355,7 +373,7 @@ Without a `servers.json` the widget still works as a plain countdown with local 
 ```
 main.swift                 Menu-bar widget (AppKit, single file)
 claude-switch              Switch the account used by local VS Code
-claude-switch-remote       Same, for a VS Code server over Remote-SSH
+claude-switch-remote       Same, for a VS Code server over Remote-SSH (any user)
 accounts.example.json      Widget accounts template
 servers.example.json       Widget servers template (tailnet IPs)
 buongiorno/
@@ -365,6 +383,7 @@ buongiorno/
   install.sh / uninstall.sh / next_runs.sh
   systemd/                 buongiorno.service, buongiorno.timer
 tools/
+  copy-accounts.sh         Copies account logins from the main server to another machine
   render_docs.sh           Renders docs/*.png from the real widget code
   harness.swift            Fictional data used for the screenshots
 docs/                      Screenshots used by this README

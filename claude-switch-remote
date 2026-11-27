@@ -1,21 +1,30 @@
 #!/usr/bin/env python3
 """claude-switch-remote: cambia account Claude per l'estensione VS Code su un server (Remote-SSH).
   claude-switch-remote list | <nome> | login <nome>
-Legge gli account da /opt/buongiorno/accounts.conf (nome|config_dir|offset; "default" = ~/.claude)."""
+Account list (name|config_dir|offset; "default" = ~/.claude), first found of:
+  $CLAUDE_ACCOUNTS_CONF, ~/.claude-accounts.conf, /etc/claude-accounts.conf, /opt/buongiorno/accounts.conf"""
 import json, os, sys, glob, subprocess
-CONF = "/opt/buongiorno/accounts.conf"; VAR = "CLAUDE_CONFIG_DIR"; CLAUDE = os.path.expanduser("~/.local/bin/claude")
+VAR = "CLAUDE_CONFIG_DIR"
 HOME = os.path.expanduser("~")
+CONF = next((c for c in [os.environ.get("CLAUDE_ACCOUNTS_CONF"), HOME + "/.claude-accounts.conf", "/etc/claude-accounts.conf",
+                         "/opt/buongiorno/accounts.conf"] if c and os.path.exists(c)), None) or sys.exit("accounts.conf not found")
+import shutil
+CLAUDE = shutil.which("claude") or next(iter(glob.glob(HOME + "/.local/bin/claude") + sorted(glob.glob(
+    HOME + "/.vscode-server/extensions/anthropic.claude-code-*/resources/native-binary/claude"))), None) or sys.exit("claude binary not found")
 
 def accounts():
     out = {}
     for l in open(CONF):
         l = l.strip()
         if l and not l.startswith("#"):
-            n, d, *_ = l.split("|"); out[n] = None if d == "default" else d
+            n, d, *_ = l.split("|"); out[n] = None if d == "default" else os.path.expanduser(os.path.expandvars(d))
     return out
 
 def settings_files():   # impostazioni "machine" dei VS Code server presenti
-    return [p + "/settings.json" for p in glob.glob(HOME + "/.vscode-server*/data/Machine") + glob.glob(HOME + "/.openvscode-server/data/Machine")]
+    dirs = glob.glob(HOME + "/.vscode-server*/data/Machine") + glob.glob(HOME + "/.openvscode-server/data/Machine")
+    if not dirs:   # VS Code server not created yet: prepare the default location
+        os.makedirs(HOME + "/.vscode-server/data/Machine", exist_ok=True); dirs = [HOME + "/.vscode-server/data/Machine"]
+    return [p + "/settings.json" for p in dirs]
 
 def read(p):
     try: return json.load(open(p))
