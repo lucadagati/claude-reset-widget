@@ -6,3 +6,5 @@ buongiorno/accounts.conf
 remote.txt
 usage_host.txt
 !docs/*.png
+servers.json
+server_selected.txt

@@ -131,6 +131,42 @@ class CardView: NSView {
     }
 }
 
+// ---- Server selection (hosts are tailnet IPs) ----
+struct Server: Decodable {
+    let name: String; let host: String        // host = tailnet IP (100.x.y.z) or name
+    let user: String?; let key: String?       // ssh user, optional private key
+    let sudo: Bool?                           // run claude-switch-remote through sudo
+    let remoteSwitch: Bool?                   // card clicks switch the account ON this server
+}
+let serversPath = NSString(string: "~/ClaudeResetWidget/servers.json").expandingTildeInPath
+let selectedPath = NSString(string: "~/ClaudeResetWidget/server_selected.txt").expandingTildeInPath
+
+func loadServers() -> [Server] {
+    guard let d = FileManager.default.contents(atPath: serversPath),
+          let l = try? JSONDecoder().decode([Server].self, from: d) else { return [] }
+    return l
+}
+func selectedServer() -> Server? {
+    let l = loadServers(); if l.isEmpty { return nil }
+    let n = (try? String(contentsOfFile: selectedPath, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
+    return l.first { $0.name == n } ?? l[0]
+}
+func remoteServer() -> Server? { let s = selectedServer(); return s?.remoteSwitch == true ? s : nil }
+
+func sshRun(_ sv: Server, _ cmd: String) -> String? {
+    var a = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5"]
+    if let k = sv.key { a += ["-i", NSString(string: k).expandingTildeInPath, "-o", "IdentitiesOnly=yes"] }
+    a += [(sv.user.map { $0 + "@" } ?? "") + sv.host, cmd]
+    let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/ssh"); p.arguments = a
+    let pipe = Pipe(); p.standardOutput = pipe; p.standardError = Pipe()
+    do { try p.run() } catch { return nil }
+    let d = pipe.fileHandleForReading.readDataToEndOfFile(); p.waitUntilExit()
+    return p.terminationStatus == 0 ? String(data: d, encoding: .utf8) : nil
+}
+func switchCmd(_ sv: Server, _ args: String) -> String {
+    (sv.sudo == true ? "sudo " : "") + "/usr/local/bin/claude-switch-remote \(args)"
+}
+
 class App: NSObject, NSApplicationDelegate {
     let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     let df: DateFormatter = {
@@ -146,17 +182,10 @@ class App: NSObject, NSApplicationDelegate {
     }
 
     var usage: [String: Usage] = [:]
-    let usageHostPath = NSString(string: "~/ClaudeResetWidget/usage_host.txt").expandingTildeInPath
     func fetchUsage() {
-        guard let h = try? String(contentsOfFile: usageHostPath, encoding: .utf8) else { return }
-        let host = h.trimmingCharacters(in: .whitespacesAndNewlines); if host.isEmpty { return }
+        guard let srv = selectedServer() else { return }
         DispatchQueue.global().async { [weak self] in
-            let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-            p.arguments = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", host, "grep -H '' /var/lib/buongiorno/usage/*.json"]
-            let pipe = Pipe(); p.standardOutput = pipe; p.standardError = Pipe()
-            do { try p.run() } catch { return }
-            let d = pipe.fileHandleForReading.readDataToEndOfFile(); p.waitUntilExit()
-            guard p.terminationStatus == 0, let out = String(data: d, encoding: .utf8) else { return }
+            guard let out = sshRun(srv, "grep -H '' /var/lib/buongiorno/usage/*.json") else { return }
             var res: [String: Usage] = [:]
             for line in out.split(separator: "\n") {
                 guard let c = line.firstIndex(of: ":") else { continue }
@@ -171,44 +200,57 @@ class App: NSObject, NSApplicationDelegate {
                                   updated: Date(timeIntervalSince1970: (j["updated"] as? Double) ?? 0))
             }
             DispatchQueue.main.async {
-                guard let s = self else { return }
+                guard let s = self, selectedServer()?.name == srv.name else { return }
                 if "\(res)" != "\(s.usage)" { s.usage = res; s.refresh(fetch: false) }
             }
         }
     }
 
     var remoteList: [(String, Bool)] = []
-    let remotePath = NSString(string: "~/ClaudeResetWidget/remote.txt").expandingTildeInPath
-    func remoteHost() -> String? {
-        guard let t = try? String(contentsOfFile: remotePath, encoding: .utf8) else { return nil }
-        let h = t.trimmingCharacters(in: .whitespacesAndNewlines); return h.isEmpty ? nil : h
-    }
-    func runRemote(_ host: String, _ args: String) -> String? {
-        let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-        p.arguments = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", host, "sudo /usr/local/bin/claude-switch-remote \(args)"]
-        let pipe = Pipe(); p.standardOutput = pipe; p.standardError = Pipe()
-        do { try p.run() } catch { return nil }
-        let d = pipe.fileHandleForReading.readDataToEndOfFile(); p.waitUntilExit()
-        return p.terminationStatus == 0 ? String(data: d, encoding: .utf8) : nil
-    }
     func fetchRemote() {
-        guard let host = remoteHost() else { return }
+        guard let srv = remoteServer() else { return }
         DispatchQueue.global().async { [weak self] in
-            guard let out = self?.runRemote(host, "list") else { return }
+            guard let out = sshRun(srv, switchCmd(srv, "list")) else { return }
             let list = out.split(separator: "\n").map { l -> (String, Bool) in
                 let t = String(l); return (t.dropFirst(2).trimmingCharacters(in: .whitespaces), t.hasPrefix("*")) }
             DispatchQueue.main.async {
-                guard let s = self else { return }
+                guard let s = self, remoteServer()?.name == srv.name else { return }
                 if list.map({ "\($0.0)\($0.1)" }) != s.remoteList.map({ "\($0.0)\($0.1)" }) { s.remoteList = list; s.refresh(fetch: false) }
             }
         }
     }
     @objc func switchRemote(_ s: NSMenuItem) {
-        guard let name = s.representedObject as? String, let host = remoteHost() else { return }
+        guard let name = s.representedObject as? String, let srv = remoteServer() else { return }
         DispatchQueue.global().async { [weak self] in
-            _ = self?.runRemote(host, name)
+            _ = sshRun(srv, switchCmd(srv, name))
             DispatchQueue.main.async { self?.fetchRemote() }
         }
+    }
+
+    // Stato online dei nodi del tailnet (CLI di Tailscale), chiave = IP tailnet
+    var tsOnline: [String: Bool] = [:]
+    func fetchTailscale() {
+        DispatchQueue.global().async { [weak self] in
+            let paths = ["/Applications/Tailscale.app/Contents/MacOS/Tailscale", "/usr/local/bin/tailscale", "/opt/homebrew/bin/tailscale"]
+            guard let bin = paths.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else { return }
+            let p = Process(); p.executableURL = URL(fileURLWithPath: bin); p.arguments = ["status", "--json"]
+            let pipe = Pipe(); p.standardOutput = pipe; p.standardError = Pipe()
+            do { try p.run() } catch { return }
+            let d = pipe.fileHandleForReading.readDataToEndOfFile(); p.waitUntilExit()
+            guard let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any], let peers = j["Peer"] as? [String: Any] else { return }
+            var m: [String: Bool] = [:]
+            for (_, v) in peers {
+                guard let n = v as? [String: Any], let ips = n["TailscaleIPs"] as? [String] else { continue }
+                for ip in ips { m[ip] = (n["Online"] as? Bool) ?? false }
+            }
+            DispatchQueue.main.async { guard let s = self else { return }; if m != s.tsOnline { s.tsOnline = m; s.refresh(fetch: false) } }
+        }
+    }
+    @objc func selectServer(_ s: NSMenuItem) {
+        guard let n = s.representedObject as? String else { return }
+        try? n.write(toFile: selectedPath, atomically: true, encoding: .utf8)
+        usage = [:]; remoteList = []
+        refresh()
     }
 
     // Barra a batteria dell'account in uso: sopra la sessione 5h, sotto la settimana.
@@ -244,10 +286,10 @@ class App: NSObject, NSApplicationDelegate {
     }
 
     func refresh(fetch: Bool = true) {
-        if fetch { fetchRemote(); fetchUsage() }
+        if fetch { fetchRemote(); fetchUsage(); fetchTailscale() }
         let now = Date()
         var activeName: String? = nil
-        if remoteHost() != nil { activeName = remoteList.first { $0.1 }?.0 }
+        if remoteServer() != nil { activeName = remoteList.first { $0.1 }?.0 }
         else {
             let cur = currentVSCodeDir()
             activeName = loadAccounts().first { a in
@@ -288,11 +330,25 @@ class App: NSObject, NSApplicationDelegate {
             m.addItem(mi)
             if i < rows.count - 1 { m.addItem(.separator()) }
         }
-        // Selettore account per VS Code
+        // Selettore server (IP del tailnet)
         m.addItem(.separator())
+        let svs = loadServers()
+        if !svs.isEmpty {
+            let cur = selectedServer()
+            let sm = NSMenu()
+            for sv in svs {
+                let dot = tsOnline[sv.host].map { $0 ? "●" : "○" } ?? "·"
+                let it = NSMenuItem(title: "\(dot)  \(sv.name)   \(sv.host)", action: #selector(selectServer(_:)), keyEquivalent: "")
+                it.target = self; it.representedObject = sv.name; it.state = sv.name == cur?.name ? .on : .off
+                sm.addItem(it)
+            }
+            let sp = NSMenuItem(title: "Server: \(cur?.name ?? "-")  (\(cur?.host ?? ""))", action: nil, keyEquivalent: "")
+            sp.submenu = sm; m.addItem(sp)
+        }
+        // Selettore account per VS Code
         let cur = currentVSCodeDir()
         let sub = NSMenu()
-        if remoteHost() != nil {
+        if remoteServer() != nil {
             for (n, on) in remoteList {
                 let it = NSMenuItem(title: n, action: #selector(switchRemote(_:)), keyEquivalent: "")
                 it.target = self; it.representedObject = n; it.state = on ? .on : .off; sub.addItem(it)
@@ -308,7 +364,7 @@ class App: NSObject, NSApplicationDelegate {
             sub.addItem(it)
         }
         }
-        let parent = NSMenuItem(title: remoteHost() != nil ? "Account Claude sul server" : "Account VS Code", action: nil, keyEquivalent: "")
+        let parent = NSMenuItem(title: remoteServer() != nil ? "Account Claude sul server" : "Account VS Code", action: nil, keyEquivalent: "")
         parent.submenu = sub; m.addItem(parent)
         var title = "⏳ nessun account"
         if let first = rows.first {
@@ -358,7 +414,7 @@ class App: NSObject, NSApplicationDelegate {
     // Clic su una scheda = stessa azione di "Account VS Code -> nome"
     func pick(_ name: String) {
         let it = NSMenuItem(); it.representedObject = name
-        if remoteHost() != nil { switchRemote(it) } else { switchAccount(it) }
+        if remoteServer() != nil { switchRemote(it) } else { switchAccount(it) }
     }
 
     @objc func openConfig() { NSWorkspace.shared.open(URL(fileURLWithPath: configPath)) }

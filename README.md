@@ -67,6 +67,7 @@ One card per account:
 - **SESSIONE 5 ORE (5-hour session)** – bar = share of the 5-hour window used, with the reset countdown and clock time. Over 100 % shows *limite raggiunto* (limit reached).
 - **Click a card** to make that account the active one for VS Code (see [Switching accounts](#switching-accounts-in-vs-code)). The menu closes and the **IN USO** pill moves.
 - A submenu (*Account VS Code* / *Account Claude sul server*) offers the same switch as a list.
+- **Server: …** submenu – choose which server (tailnet IP) the widget reads usage from and switches accounts on, with live online/offline status.
 
 ## Architecture
 
@@ -102,7 +103,7 @@ flowchart LR
     CFG --> API
     API -- "rate_limit_event<br/>(5h + 7d utilization)" --> S
 
-    W -- "ssh: read usage files<br/>every 30 s" --> U
+    W -- "ssh to selected server (tailnet IP):<br/>read usage files every 30 s" --> U
     W -- "ssh: sudo claude-switch-remote &lt;account&gt;" --> CSR
     VSL -. "Remote-SSH" .-> VSR
 ```
@@ -214,7 +215,7 @@ claude-switch-remote list
 claude-switch-remote account-b
 ```
 
-From a menu-bar widget on M, create `remote.txt` containing an SSH alias of a server user that has passwordless `sudo`; clicking a card then runs `ssh <alias> sudo /usr/local/bin/claude-switch-remote <name>`. No new access is created: it reuses an SSH key that already works.
+From the menu-bar widget on M, add the server to `servers.json` with `"remoteSwitch": true`; clicking a card then runs `ssh <user>@<tailnet-ip> [sudo] /usr/local/bin/claude-switch-remote <name>` on the **currently selected server**. No new access is created: it reuses an SSH key that already works.
 
 After switching, **open a new Claude conversation** (or run *Developer: Reload Window*). Conversations already open keep the account they started with.
 
@@ -277,16 +278,24 @@ cat /var/lib/buongiorno/usage/account-b.json
 
 Requirements: Claude Code CLI at `/root/.local/bin/claude`, `python3`, systemd.
 
-### 3. Show real usage in the widget
+### 3. Choose the server(s) the widget talks to (tailnet IPs)
 
-Create `usage_host.txt` containing an SSH alias/host whose user can read `/var/lib/buongiorno/usage/*.json` (the files are world-readable). Key-based SSH must work non-interactively (`ssh -o BatchMode=yes`).
+List your servers in `servers.json`, using their **Tailscale (tailnet) IPs**, then pick one from the menu (**Server: …** submenu). The selected server is where the widget reads real usage from and, optionally, where it switches the Claude account.
+
+```bash
+cp servers.example.json servers.json          # edit: name, tailnet IP, user, key
+```
+
+Key-based SSH must work non-interactively (`ssh -o BatchMode=yes <user>@<tailnet-ip> true`). Usage files are world-readable, so any user that can log in can read them.
+
+The submenu shows each server's live status from the Tailscale CLI, matched by IP: `●` online, `○` offline, `·` unknown. Your choice is remembered in `server_selected.txt`; switching server instantly reloads usage (and the account list, if remote switching is enabled).
 
 ### 4. (Optional) Switch accounts on the server from the widget
 
 ```bash
-scp claude-switch-remote root@server:/usr/local/bin/ && ssh root@server chmod +x /usr/local/bin/claude-switch-remote
-echo my-ssh-alias > ~/ClaudeResetWidget/remote.txt
+scp claude-switch-remote root@<tailnet-ip>:/usr/local/bin/ && ssh root@<tailnet-ip> chmod +x /usr/local/bin/claude-switch-remote
 ```
+Then set `"remoteSwitch": true` (and `"sudo": true` if the SSH user is not root) on that server in `servers.json`.
 
 ## Configuration reference
 
@@ -317,12 +326,25 @@ account-c|/root/.claude-account-c|203
 
 `default` means the user's standard `~/.claude`. Offsets: use `305 / N` minutes between accounts.
 
-### Optional files next to the widget (all git-ignored)
+### `servers.json` (widget, per Mac; git-ignored)
 
-| File | Content | Effect |
-|---|---|---|
-| `usage_host.txt` | SSH alias | Enables real usage bars |
-| `remote.txt` | SSH alias with passwordless sudo | Card clicks switch the account on the server instead of local VS Code |
+```json
+[
+  {"name": "server-1", "host": "100.64.0.10", "user": "root"},
+  {"name": "server-2", "host": "100.64.0.11", "user": "ops", "key": "~/.ssh/id_ed25519_server2", "sudo": true, "remoteSwitch": true}
+]
+```
+
+| Field | Meaning |
+|---|---|
+| `name` | Label shown in the **Server** submenu and stored in `server_selected.txt` |
+| `host` | The server's **tailnet IP** (also used to look up online status in `tailscale status`) |
+| `user` | SSH user (omit to use your default) |
+| `key` | Private key to use (`IdentitiesOnly`); omit to use your normal SSH configuration |
+| `sudo` | Run `claude-switch-remote` through passwordless `sudo` (needed when `user` is not root) |
+| `remoteSwitch` | `true`: clicking a card switches the account **on this server** (VS Code over Remote-SSH). `false`/omitted: clicking switches the local VS Code |
+
+Without a `servers.json` the widget still works as a plain countdown with local account switching.
 
 ### Other knobs in `buongiorno.sh`
 
@@ -334,7 +356,8 @@ account-c|/root/.claude-account-c|203
 main.swift                 Menu-bar widget (AppKit, single file)
 claude-switch              Switch the account used by local VS Code
 claude-switch-remote       Same, for a VS Code server over Remote-SSH
-accounts.example.json      Widget config template
+accounts.example.json      Widget accounts template
+servers.example.json       Widget servers template (tailnet IPs)
 buongiorno/
   buongiorno.sh            Timer logic + minimal Claude request
   parse_usage.py           Extracts utilization from stream-json output
@@ -350,7 +373,7 @@ docs/                      Screenshots used by this README
 ## Security and privacy
 
 - **Credentials never enter this repo or the widget.** Logins live in each account's config directory (and the macOS Keychain); the widget and scripts only reference the directory path.
-- Personal files are git-ignored: `accounts.json`, `accounts.conf`, `remote.txt`, `usage_host.txt`, binaries and `*.bak`.
+- Personal files are git-ignored: `accounts.json`, `accounts.conf`, `servers.json`, `server_selected.txt`, binaries and `*.bak`.
 - The widget talks only to hosts you configure, over SSH with `BatchMode` (no password prompts). Usage files contain only utilization fractions and reset timestamps.
 - The server timer sends real (tiny) requests to Anthropic with your accounts; they count against your usage and are subject to Anthropic's terms for your plan.
 - `claude-switch-remote` needs write access to the VS Code server's settings, hence it is meant to run as the same user that runs the VS Code server (often root in containers).
@@ -368,11 +391,11 @@ docs/                      Screenshots used by this README
 
 | Symptom | Check |
 |---|---|
-| Menu bar shows a text countdown, not bars | `usage_host.txt` missing, host unreachable, or no usage files yet. Try `ssh -o BatchMode=yes <host> 'ls /var/lib/buongiorno/usage'` |
+| Menu bar shows a text countdown, not bars | No `servers.json`, selected server unreachable, or no usage files yet. Try `ssh -o BatchMode=yes <user>@<tailnet-ip> 'ls /var/lib/buongiorno/usage'` |
 | Two accounts show identical numbers | They were logged in to the same claude.ai user. Run `CLAUDE_CONFIG_DIR=… claude auth status` for each and re-login in a private window |
 | `not authenticated, skipping` in the log | That config dir has no login; run `claude auth login` with its `CLAUDE_CONFIG_DIR` |
 | Clicking a card does nothing visible | Open a new Claude conversation / reload the VS Code window; check `./claude-switch list` or `claude-switch-remote list` |
-| "server non raggiungibile…" in the submenu | `remote.txt` alias can't connect non-interactively, or `sudo` needs a password |
+| "server non raggiungibile…" in the submenu | the selected server in `servers.json` can't be reached non-interactively, or `sudo` needs a password |
 | `You've hit your session limit` in the log | Expected when an account is exhausted; it retries next cycle |
 | Widget menu looks stale | It refreshes every 30 s; restart with `launchctl kickstart -k gui/$(id -u)/com.user.claudeResetWidget` |
 
