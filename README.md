@@ -296,12 +296,12 @@ Buongiorno only needs to run on **one** server. Other servers (used through VS C
 
 ```bash
 # interactive: one login per account on that server (open each link in a private browser window)
-tools/login-accounts.sh dev@<other-tailnet-ip> account-a account-b      # DEFAULT=account-c ... if ~/.claude there is already account-c
+DEFAULT_NAME=account-a tools/login-accounts.sh dev@<other-tailnet-ip> account-b account-c
 # install the switch script for that user
 scp claude-switch-remote dev@<other-tailnet-ip>:/tmp/ && ssh dev@<other-tailnet-ip> 'mkdir -p ~/.local/bin && install -m 755 /tmp/claude-switch-remote ~/.local/bin/'
 ```
 
-`login-accounts.sh` creates `~/.claude-<name>/` on the target, runs the login there, writes `~/.claude-accounts.conf` and verifies every account with a real request (note: `claude auth status` alone says `loggedIn: true` even for expired logins, so it is not a valid check). An existing default login on the target is never touched.
+**Convention:** your main account (`DEFAULT_NAME`) is always the *default* login (`~/.claude`) on every server; the other accounts live in `~/.claude-<name>/` and are selected through `CLAUDE_CONFIG_DIR`. `login-accounts.sh` logs the default account in (previous default credentials are backed up; `SKIP_DEFAULT=1` leaves them), creates `~/.claude-<name>/` for the others, runs the logins there, writes `~/.claude-accounts.conf` and verifies every account with a real request (note: `claude auth status` alone says `loggedIn: true` even for expired logins, so it is not a valid check). 
 
 If your SSH key has a passphrase, load it once so the widget can use it non-interactively: `ssh-add --apple-use-keychain /path/to/key` (on every Mac running the widget).
 
