@@ -31,6 +31,6 @@ for n in "${EXTRA[@]}"; do
   ssh -t "$TARGET" "$BIN; d=\$HOME/.claude-$n; [ -e \$d ] && mv \$d \$d.old; mkdir -p \$d; CLAUDE_CONFIG_DIR=\$d \$B auth login"
   CONF+="\n$n|\$HOME/.claude-$n|${OFFSETS[$i]:-0}"; i=$((i+1))
 done
-ssh "$TARGET" "$BIN; printf '$CONF\n' | sed \"s#\\\$HOME#\$HOME#\" > ~/.claude-accounts.conf; cd /tmp
+ssh "$TARGET" "$BIN; T=\$(command -v timeout || command -v gtimeout || true); printf '$CONF\n' | sed \"s#\\\$HOME#\$HOME#\" > ~/.claude-accounts.conf; cd /tmp
 for n in default ${EXTRA[*]:-}; do if [ \$n = default ]; then unset CLAUDE_CONFIG_DIR; else export CLAUDE_CONFIG_DIR=\$HOME/.claude-\$n; fi
-  echo -n \"\$n: \$(\$B auth status 2>&1 | grep -o '\\\"email\\\": \\\"[^\\\"]*\\\"') -> \"; timeout 60 \$B -p ok --model haiku --system-prompt 'Reply with one character.' --tools '' --setting-sources '' </dev/null 2>&1 | head -1; done"
+  echo -n \"\$n: \$(\$B auth status 2>&1 | grep -o '\\\"email\\\": \\\"[^\\\"]*\\\"') -> \"; \$T 60 \$B -p ok --model haiku --system-prompt 'Reply with one character.' --tools '' --setting-sources '' </dev/null 2>&1 | head -1; done"
