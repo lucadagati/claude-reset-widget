@@ -292,16 +292,16 @@ The submenu shows each server's live status from the Tailscale CLI, matched by I
 
 ### 4. (Optional) Use all your accounts on other servers
 
-Buongiorno only needs to run on **one** server. Other servers (used through VS Code Remote-SSH) only need the logins and the switch script:
+Buongiorno only needs to run on **one** server. Other servers (used through VS Code Remote-SSH) only need the logins and the switch script. **Log in separately on each server; do not copy credentials between machines.** A copied login shares its refresh token with the original, so when either side refreshes, the other can end up with "OAuth session expired and could not be refreshed" (this happened in practice, even breaking the original).
 
 ```bash
-# copy the logins of all accounts from the main server (SKIP = accounts already logged in as ~/.claude there)
-tools/copy-accounts.sh root@<main-tailnet-ip> dev@<other-tailnet-ip> "" account-b
+# interactive: one login per account on that server (open each link in a private browser window)
+tools/login-accounts.sh dev@<other-tailnet-ip> account-a account-b      # DEFAULT=account-c ... if ~/.claude there is already account-c
 # install the switch script for that user
 scp claude-switch-remote dev@<other-tailnet-ip>:/tmp/ && ssh dev@<other-tailnet-ip> 'mkdir -p ~/.local/bin && install -m 755 /tmp/claude-switch-remote ~/.local/bin/'
 ```
 
-`copy-accounts.sh` copies only the OAuth credentials and minimal account info, through the SSH pipe (nothing is written locally or committed), into `~/.claude-<name>/` on the target and writes `~/.claude-accounts.conf`. An existing default login on the target is left untouched. Caveat: using the same login on several machines at once may invalidate a copy (token refresh); if an account asks to log in again, re-login there.
+`login-accounts.sh` creates `~/.claude-<name>/` on the target, runs the login there, writes `~/.claude-accounts.conf` and verifies every account with a real request (note: `claude auth status` alone says `loggedIn: true` even for expired logins, so it is not a valid check). An existing default login on the target is never touched.
 
 If your SSH key has a passphrase, load it once so the widget can use it non-interactively: `ssh-add --apple-use-keychain /path/to/key` (on every Mac running the widget).
 
@@ -383,7 +383,7 @@ buongiorno/
   install.sh / uninstall.sh / next_runs.sh
   systemd/                 buongiorno.service, buongiorno.timer
 tools/
-  copy-accounts.sh         Copies account logins from the main server to another machine
+  login-accounts.sh        Interactive per-server Claude logins (no credential copying)
   render_docs.sh           Renders docs/*.png from the real widget code
   harness.swift            Fictional data used for the screenshots
 docs/                      Screenshots used by this README
