@@ -1,7 +1,7 @@
 import Cocoa
 
-struct Account: Decodable { let name: String; let anchor: String; let offset: Int?; let configDir: String? }
-struct Acc { let name: String; let anchor: Date; let offset: Int?; let configDir: String? }
+struct Account: Decodable { let name: String; let anchor: String; let offset: Int?; let configDir: String?; let claudeAppDir: String? }
+struct Acc { let name: String; let anchor: Date; let offset: Int?; let configDir: String?; let claudeAppDir: String? }
 
 let configPath = NSString(string: "~/ClaudeResetWidget/accounts.json").expandingTildeInPath
 let week: TimeInterval = 7 * 86400
@@ -13,7 +13,7 @@ func loadAccounts() -> [Acc] {
     guard let data = FileManager.default.contents(atPath: configPath),
           let list = try? JSONDecoder().decode([Account].self, from: data) else { return [] }
     let f = ISO8601DateFormatter()
-    return list.compactMap { a in f.date(from: a.anchor).map { Acc(name: a.name, anchor: $0, offset: a.offset, configDir: a.configDir) } }
+    return list.compactMap { a in f.date(from: a.anchor).map { Acc(name: a.name, anchor: $0, offset: a.offset, configDir: a.configDir, claudeAppDir: a.claudeAppDir) } }
 }
 
 func nextReset(_ anchor: Date, now: Date) -> Date {
@@ -168,6 +168,30 @@ func sshRun(_ sv: Server, _ cmd: String) -> String? {
 }
 func switchCmd(_ sv: Server, _ args: String) -> String {
     (sv.sudo == true ? "sudo " : "") + (sv.switchPath ?? "/usr/local/bin/claude-switch-remote") + " \(args)"
+}
+
+// ---- Claude desktop app: one profile (user-data-dir) per account ----
+let appSupport = NSString(string: "~/Library/Application Support").expandingTildeInPath
+func appProfileDir(_ a: Acc) -> String {
+    if let d = a.claudeAppDir { return NSString(string: d).expandingTildeInPath }
+    return appSupport + "/Claude-" + a.name
+}
+// main processes of the Claude app: (pid, profile dir in use)
+func claudeAppProcesses() -> [(Int32, String)] {
+    let p = Process(); p.executableURL = URL(fileURLWithPath: "/bin/ps"); p.arguments = ["-axo", "pid=,command="]
+    let pipe = Pipe(); p.standardOutput = pipe; p.standardError = Pipe()
+    do { try p.run() } catch { return [] }
+    let d = pipe.fileHandleForReading.readDataToEndOfFile(); p.waitUntilExit()
+    var out: [(Int32, String)] = []
+    for line in (String(data: d, encoding: .utf8) ?? "").split(separator: "\n") {
+        guard line.contains("/Claude.app/Contents/MacOS/Claude"), !line.contains("Helper") else { continue }
+        let t = line.trimmingCharacters(in: .whitespaces)
+        guard let sp = t.firstIndex(of: " "), let pid = Int32(t[..<sp]) else { continue }
+        var dir = appSupport + "/Claude"
+        if let r = t.range(of: "--user-data-dir=") { dir = String(t[r.upperBound...]).trimmingCharacters(in: .whitespaces) }
+        out.append((pid, dir))
+    }
+    return out
 }
 
 class App: NSObject, NSApplicationDelegate {
@@ -369,6 +393,17 @@ class App: NSObject, NSApplicationDelegate {
         }
         let parent = NSMenuItem(title: remoteServer() != nil ? "Account Claude sul server" : "Account VS Code", action: nil, keyEquivalent: "")
         parent.submenu = sub; m.addItem(parent)
+        // App Claude (profilo per account)
+        let appSub = NSMenu()
+        let curApp = claudeAppProcesses().first?.1
+        for a in loadAccounts() {
+            let d = appProfileDir(a)
+            let fresh = !FileManager.default.fileExists(atPath: d + "/Local Storage") && !FileManager.default.fileExists(atPath: d + "/Cookies")
+            let it = NSMenuItem(title: fresh ? "\(a.name)  (primo accesso nell'app)" : a.name, action: #selector(openClaudeApp(_:)), keyEquivalent: "")
+            it.target = self; it.representedObject = a.name; it.state = (curApp == d) ? .on : .off
+            appSub.addItem(it)
+        }
+        let appParent = NSMenuItem(title: "App Claude", action: nil, keyEquivalent: ""); appParent.submenu = appSub; m.addItem(appParent)
         var title = "⏳ nessun account"
         if let first = rows.first {
             title = "⏳ \(first.0.name) \(fmt(first.1.timeIntervalSince(now)))"
@@ -414,8 +449,31 @@ class App: NSObject, NSApplicationDelegate {
         refresh()
     }
 
+    // Quit the Claude app (if running) and reopen it with the profile of the given account.
+    // launchIfStopped = false: when the app is not running nothing is launched (the choice is not forced on you).
+    func switchClaudeApp(_ name: String, launchIfStopped: Bool) {
+        guard let a = loadAccounts().first(where: { $0.name == name }) else { return }
+        let dir = appProfileDir(a)
+        DispatchQueue.global().async {
+            let running = claudeAppProcesses()
+            if running.isEmpty && !launchIfStopped { return }
+            if running.contains(where: { $0.1 == dir }) { return }            // already on this account
+            running.forEach { kill($0.0, SIGTERM) }
+            for _ in 0..<40 { if claudeAppProcesses().isEmpty { break }; Thread.sleep(forTimeInterval: 0.25) }
+            let o = Process(); o.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+            o.arguments = ["-n", "-a", "Claude", "--args", "--user-data-dir=" + dir]
+            try? o.run()
+            DispatchQueue.main.async { [weak self] in self?.refresh(fetch: false) }
+        }
+    }
+    @objc func openClaudeApp(_ s: NSMenuItem) {
+        guard let n = s.representedObject as? String else { return }
+        switchClaudeApp(n, launchIfStopped: true)
+    }
+
     // Clic su una scheda = stessa azione di "Account VS Code -> nome"
     func pick(_ name: String) {
+        switchClaudeApp(name, launchIfStopped: false)
         let it = NSMenuItem(); it.representedObject = name
         if remoteServer() != nil { switchRemote(it) } else { switchAccount(it) }
     }

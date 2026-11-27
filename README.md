@@ -259,6 +259,16 @@ On Linux servers the switch also works **inside an already running conversation*
 - Install once per machine: `claude-account-banner --install` registers the hooks in the `settings.json` of `~/.claude`, `~/.claude-live` and every `~/.claude-*` dir (idempotent; the previous file is saved once as `settings.json.bak-banner`). On servers copy it next to `claude-switch-remote`; on a Mac keep it in `~/ClaudeResetWidget`.
 - Note: the hook output is delivered to Claude Code as a user-visible *system message*; how prominently the VS Code panel renders it depends on the extension version.
 
+### Claude desktop app (macOS)
+
+The Claude desktop app keeps its own claude.ai login, separate from the Claude Code tokens above, so it is switched differently: **one app profile per account**. The widget quits the app and reopens it with `--user-data-dir=<profile of that account>` (an Electron/Chromium option the app honours; verified: it creates a fresh, independent profile).
+
+- **Automatic:** clicking an account card also switches the app, **if the app is running** (it is not launched behind your back if it is closed). Unsaved text in the app window is lost when it restarts.
+- **Manual:** menu **App Claude** → account launches (or relaunches) the app on that account; a check mark shows the profile currently running.
+- **First use per account:** a new profile starts logged out. The submenu marks it *"primo accesso nell'app"*; sign in once in the app with that account, and it is remembered from then on.
+- Profiles live in `~/Library/Application Support/Claude-<account>`. Your original data (`~/Library/Application Support/Claude`, what the Dock icon opens) is **never modified**. If that default profile is already signed in as one of your accounts, point that account at it in `accounts.json` with `"claudeAppDir": "~/Library/Application Support/Claude"` and it needs no extra login.
+- Limit: opening the app from the Dock or Spotlight uses the default profile, not the account selected in the widget; use the widget to open it on a specific account.
+
 ### Logging an account in (once)
 
 ```bash
@@ -369,6 +379,7 @@ Then set `"remoteSwitch": true` (and `"sudo": true` if the SSH user is not root)
 | `anchor` | Any one weekly-reset instant (ISO 8601 with offset); the widget repeats it every 7 days |
 | `offset` | Minutes of stagger in the 305-minute Buongiorno cycle (must match `accounts.conf`); omit to hide 5-hour info |
 | `configDir` | Claude config dir of this account on **this** Mac, for local switching; omit = default `~/.claude` |
+| `claudeAppDir` | Claude desktop-app profile folder for this account (default `~/Library/Application Support/Claude-<name>`); see [Claude desktop app](#claude-desktop-app-macos) |
 
 ### `buongiorno/accounts.conf` (server; git-ignored)
 
